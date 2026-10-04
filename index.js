@@ -61,7 +61,7 @@ if (!process.env.UV_THREADPOOL_SIZE) {
 // ─────────────────────────────────────────────
 // 3. Constants
 // ─────────────────────────────────────────────
-const SOURCE = 'https://github.com/themalik-g/al-jin-whatsapp-bot.git';
+const SOURCE = 'https://github.com/themalik-g/al-jin-lite.git';
 const BRANCH = process.env.WRAITH_BRANCH || 'main';
 const HARDCODED_BOT_NUMBER = '';
 const CLONE_TIMEOUT = 180_000;
