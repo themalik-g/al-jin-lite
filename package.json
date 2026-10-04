@@ -1,0 +1,65 @@
+{
+  "name": "al-jin-whatsapp-bot-lite",
+  "version": "1.4.0-lite",
+  "description": "Al-Jin Lite — ultra-light WhatsApp bot (Baileys v7): zero-storage anti-delete relay, ESM downloads, Gemini AI, group admin. No ffmpeg, no yt-dlp, no disk media.",
+  "keywords": [
+    "al-jin",
+    "al-jin-md",
+    "al-jin-bot",
+    "whatsapp-bot",
+    "whatsapp",
+    "baileys",
+    "baileys-v7",
+    "whatsapp-md",
+    "whatsapp-multi-device",
+    "anti-delete",
+    "view-once",
+    "youtube-downloader",
+    "gemini",
+    "self-hosted",
+    "nodejs",
+    "pairing-code",
+    "group-management",
+    "lightweight"
+  ],
+  "homepage": "https://github.com/themalik-g/al-jin-whatsapp-bot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themalik-g/al-jin-whatsapp-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/themalik-g/al-jin-whatsapp-bot/issues"
+  },
+  "author": "Malik Mehtab (https://github.com/themalik-g)",
+  "license": "MIT",
+  "type": "module",
+  "main": "start.js",
+  "scripts": {
+    "postinstall": "node scripts/apply-baileys-patch.js",
+    "patch": "node scripts/apply-baileys-patch.js",
+    "prestart": "node scripts/apply-baileys-patch.js",
+    "start": "node --preserve-symlinks --preserve-symlinks-main start.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cacheable/node-cache": "^1.4.0",
+    "@hapi/boom": "^10.0.1",
+    "@postfetch/core": "npm:@jsr/postfetch__core@^0.6.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc.14",
+    "awesome-phonenumber": "^7.8.0",
+    "dotenv": "^16.4.7",
+    "p-queue": "^9.0.0",
+    "pino": "^9.0.0",
+    "sharp": "^0.33.5"
+  },
+  "allowScripts": {
+    "@whiskeysockets/baileys": true,
+    "protobufjs": true,
+    "sharp": true
+  }
+}
