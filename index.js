@@ -85,7 +85,7 @@ const BRANCH = process.env.WRAITH_BRANCH || 'main';
 //  Precedence:  CLI --phone=…  >  Pairing_Number  >  env  >  null
 //  Env fallback keys: WRAITH_PHONE / WRAITH_NUMBER
 // ─────────────────────────────────────────────
-const Pairing_Number = '994405073038'; // ← put your number here, e.g. '923001234567'
+const Pairing_Number = ''; // ← put your number here, e.g. '923001234567'
 
 const CLONE_TIMEOUT = 180_000;
 const INSTALL_TIMEOUT = 300_000;
