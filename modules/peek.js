@@ -197,18 +197,28 @@ async function forwardStripped(sock, targetChat, originalMsg, vo, opts = {}) {
             messageId: waMsg.key.id
         });
 
-        // Caption goes as a separate message so it doesn't interfere
+        // Media is already delivered — anything below is purely cosmetic.
+        // Mention resolution is best-effort and must never flip success → failure.
         if (prefix || mentionSender) {
-            const bestSender = mentionSender ? await getBestUserJid(mentionSender, sock, targetChat) : null;
+            let bestSender = null;
+            if (mentionSender) {
+                try {
+                    bestSender = await getBestUserJid(mentionSender, sock, targetChat);
+                } catch (e) {
+                    if (DEBUG) console.log('[peek:mention] resolve failed (forward):', e.message);
+                }
+            }
             const captionText = [
                 prefix,
                 bestSender ? `from @${digitsOf(bestSender)}` : ''
             ].filter(Boolean).join('\n').trim();
             const mentions = bestSender ? [bestSender] : [];
 
-            try {
-                await sock.sendMessage(targetChat, { text: captionText, mentions });
-            } catch {}
+            if (captionText) {
+                try {
+                    await sock.sendMessage(targetChat, { text: captionText, mentions });
+                } catch {}
+            }
         }
 
         if (DEBUG) console.log('[peek:forward] ✅ to', targetChat);
@@ -253,7 +263,20 @@ async function downloadAndSend(sock, targetChat, vo, opts = {}) {
     if (!vo || !vo.node) return false;
 
     try {
-        const bestSender = mentionSender ? await getBestUserJid(mentionSender, sock, targetChat) : null;
+        // ── CRITICAL FIX ──
+        // Mention resolution is best-effort. If the JID resolver throws (common for
+        // group / LID senders), it must NOT abort the download+send. Previously this
+        // was the first await in the try block, so any resolver error caused the
+        // whole capture to silently fail.
+        let bestSender = null;
+        if (mentionSender) {
+            try {
+                bestSender = await getBestUserJid(mentionSender, sock, targetChat);
+            } catch (e) {
+                if (DEBUG) console.log('[peek:mention] resolve failed (download):', e.message);
+            }
+        }
+
         const buf = await downloadBuffer(vo);
 
         const caption = [
@@ -299,7 +322,7 @@ async function downloadAndSend(sock, targetChat, vo, opts = {}) {
     }
 }
 
-// Try forward first, fall back to download
+// Try download first, fall back to forward
 async function revealViewOnce(sock, targetChat, originalMsg, vo, opts = {}) {
     const downloaded = await downloadAndSend(sock, targetChat, vo, opts);
     if (downloaded) return { method: 'download', ok: true };
@@ -504,16 +527,12 @@ export async function autoPeek(sock, msg) {
 }
 
 // ─────────────────────────────────────────────
-//  NEW — Passive quoted watcher
+//  Passive quoted watcher
 //
 //  Runs on EVERY inbound message. If the message
 //  quotes a view-once, their phone embedded the
 //  real content in contextInfo.quotedMessage.
 //  We extract it and send it straight to your DM.
-//
-//  This is the only way to reliably catch view-onces
-//  on a linked device — the original stub never
-//  reveals itself, but any reply to it does.
 // ─────────────────────────────────────────────
 // Short, media-free description of a quoted message (for debug reports).
 function describeQuote(ctx) {
@@ -574,15 +593,13 @@ export async function watchQuotedViewOnce(sock, msg) {
 
     const vo = extractAnyMedia({ message: ctx.quotedMessage });
 
-    // Debug report: shows exactly what WhatsApp delivered inside the quote.
+    // Debug report — always emits what WhatsApp actually delivered inside the quote,
+    // even when no media node was found (that's the most useful case for diagnosis).
     if (s.debug && !seenQuoted.has('dbg:' + quotedId)) {
-        const q = ctx.quotedMessage;
-        if (vo) {
-            seenQuoted.set('dbg:' + quotedId, Date.now());
-            const report = `🛠️ *peek debug*\ndetected media: ${vo ? vo.type + (vo.viewOnce ? ' (view-once)' : '') : 'NO'}\n${describeQuote(ctx)}`;
-            console.log('[peek:watch]', report.replace(/\n/g, ' | '));
-            try { await sock.sendMessage(ownerJid(), { text: report }); } catch {}
-        }
+        seenQuoted.set('dbg:' + quotedId, Date.now());
+        const report = `🛠️ *peek debug*\ndetected media: ${vo ? vo.type + (vo.viewOnce ? ' (view-once)' : '') : 'NONE'}\n${describeQuote(ctx)}`;
+        console.log('[peek:watch]', report.replace(/\n/g, ' | '));
+        try { await sock.sendMessage(ownerJid(), { text: report }); } catch {}
     }
     if (!vo) return;
 
@@ -595,15 +612,14 @@ export async function watchQuotedViewOnce(sock, msg) {
         console.log('[peek:watch] quoted', vo.viewOnce ? 'view-once' : 'media', quotedId, vo.type,
             '| mediaKey:', !!vo.node.mediaKey, '| directPath:', !!vo.node.directPath, '| url:', !!vo.node.url);
 
-        let result = { ok: false, method: 'none' };
-        if (hasKeys) {
-            result = await revealViewOnce(sock, owner, msg, vo, {
-                mentionSender: originalSender,
-                prefix: vo.viewOnce
-                    ? `👁️ *peek · view-once ${vo.type} captured from a reply*`
-                    : `📎 *peek · quoted ${vo.type}*`
-            });
-        }
+        // Always attempt the reveal — revealViewOnce tries download first, then forward.
+        // The old hasKeys gate silently skipped forward-only captures.
+        const result = await revealViewOnce(sock, owner, msg, vo, {
+            mentionSender: originalSender,
+            prefix: vo.viewOnce
+                ? `👁️ *peek · view-once ${vo.type} captured from a reply*`
+                : `📎 *peek · quoted ${vo.type}*`
+        });
 
         if (result.ok) {
             seenQuoted.set(quotedId, Date.now());
@@ -627,7 +643,9 @@ export async function watchQuotedViewOnce(sock, msg) {
             attempts.delete(quotedId);
         }
         if (vo.viewOnce && (tries >= 2 || !hasKeys)) {
-            const bestSender = await getBestUserJid(originalSender, sock, owner).catch(() => null);
+            let bestSender = null;
+            try { bestSender = await getBestUserJid(originalSender, sock, owner); }
+            catch (e) { if (DEBUG) console.log('[peek:mention] resolve failed (fail-note):', e.message); }
             const note = `👁️ *peek · couldn't capture a ${vo.type}*\n${reason}.` +
                 (bestSender ? `\nfrom @${digitsOf(bestSender)}` : '');
             const thumb = vo.node.jpegThumbnail;
@@ -649,4 +667,4 @@ export async function watchQuotedViewOnce(sock, msg) {
     } finally {
         inFlight.delete(quotedId);
     }
-}
+    }
