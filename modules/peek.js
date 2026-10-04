@@ -16,6 +16,19 @@ const STATE = () => inState('peek.json');
 const DEBUG = process.env.WRAITH_DEBUG === '1';
 
 // ─────────────────────────────────────────────
+//  Timeout helper — protects against a hung
+//  LID→PN resolver blocking the whole capture.
+// ─────────────────────────────────────────────
+function withTimeout(promise, ms, label = 'op') {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+        )
+    ]);
+}
+
+// ─────────────────────────────────────────────
 //  State file bootstrap
 // ─────────────────────────────────────────────
 function initPeekState() {
@@ -112,9 +125,8 @@ function extractViewOnce(msg) {
         ['audioMessage', 'audio'],
     ];
     const VO_WRAPPERS = ['viewOnceMessageV2', 'viewOnceMessageV2Extension', 'viewOnceMessage'];
-    const PLAIN_WRAPPERS = ['ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage'];
+    const PLAIN_WRAPPERS = ['ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage', 'associatedChildMessage'];
 
-    // Walk through every wrapper WhatsApp may put around the media.
     let viaViewOnce = false;
     for (let depth = 0; depth < 6 && m; depth++) {
         for (const [key, type] of MEDIA) {
@@ -146,8 +158,9 @@ function extractAnyMedia(msg) {
         ['imageMessage', 'image'], ['videoMessage', 'video'], ['audioMessage', 'audio'],
         ['stickerMessage', 'sticker'], ['documentMessage', 'document'],
     ];
+    // associatedChildMessage added — see Baileys issue #1872.
     const WRAPPERS = ['viewOnceMessageV2', 'viewOnceMessageV2Extension', 'viewOnceMessage',
-        'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage'];
+        'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage', 'associatedChildMessage'];
     let viaViewOnce = false;
     for (let depth = 0; depth < 6 && m; depth++) {
         for (const [key, type] of MEDIA) {
@@ -197,13 +210,15 @@ async function forwardStripped(sock, targetChat, originalMsg, vo, opts = {}) {
             messageId: waMsg.key.id
         });
 
-        // Media is already delivered — anything below is purely cosmetic.
-        // Mention resolution is best-effort and must never flip success → failure.
+        // Media is already delivered — caption/mention is purely cosmetic and
+        // must never flip success → failure.
         if (prefix || mentionSender) {
             let bestSender = null;
             if (mentionSender) {
                 try {
-                    bestSender = await getBestUserJid(mentionSender, sock, targetChat);
+                    bestSender = await withTimeout(
+                        getBestUserJid(mentionSender, sock, targetChat), 4000, 'jid-resolve(forward)'
+                    );
                 } catch (e) {
                     if (DEBUG) console.log('[peek:mention] resolve failed (forward):', e.message);
                 }
@@ -215,9 +230,7 @@ async function forwardStripped(sock, targetChat, originalMsg, vo, opts = {}) {
             const mentions = bestSender ? [bestSender] : [];
 
             if (captionText) {
-                try {
-                    await sock.sendMessage(targetChat, { text: captionText, mentions });
-                } catch {}
+                try { await sock.sendMessage(targetChat, { text: captionText, mentions }); } catch {}
             }
         }
 
@@ -263,15 +276,14 @@ async function downloadAndSend(sock, targetChat, vo, opts = {}) {
     if (!vo || !vo.node) return false;
 
     try {
-        // ── CRITICAL FIX ──
-        // Mention resolution is best-effort. If the JID resolver throws (common for
-        // group / LID senders), it must NOT abort the download+send. Previously this
-        // was the first await in the try block, so any resolver error caused the
-        // whole capture to silently fail.
+        // Mention resolution is best-effort AND timeout-guarded. A hung or
+        // failing LID→PN resolver must never abort the download/send.
         let bestSender = null;
         if (mentionSender) {
             try {
-                bestSender = await getBestUserJid(mentionSender, sock, targetChat);
+                bestSender = await withTimeout(
+                    getBestUserJid(mentionSender, sock, targetChat), 4000, 'jid-resolve(download)'
+                );
             } catch (e) {
                 if (DEBUG) console.log('[peek:mention] resolve failed (download):', e.message);
             }
@@ -344,7 +356,6 @@ export async function peekCommand(sock, chat, msg, args) {
     const quoted = ctx?.quotedMessage;
     const hasQuote = !!quoted;
 
-    // ── Settings commands ──
     const isSettingsCmd = a0 === 'auto' || a0 === 'dest' || a0 === 'watch' || a0 === 'debug' ||
                           a0 === 'on' || a0 === 'off';
 
@@ -368,33 +379,23 @@ export async function peekCommand(sock, chat, msg, args) {
         if (a0 === 'auto' || a0 === 'on' || a0 === 'off') {
             const wantOn = a0 === 'on' || a1 === 'on';
             if (a0 === 'auto' && a1 !== 'on' && a1 !== 'off') {
-                return sock.sendMessage(chat, {
-                    text: '👁️ use _.peek auto on_ or _.peek auto off_'
-                }, { quoted: msg });
+                return sock.sendMessage(chat, { text: '👁️ use _.peek auto on_ or _.peek auto off_' }, { quoted: msg });
             }
             if (s.auto === wantOn) {
-                return sock.sendMessage(chat, {
-                    text: `ℹ️ auto-peek is already *${s.auto ? 'armed (ON)' : 'disarmed (OFF)'}*.`
-                }, { quoted: msg });
+                return sock.sendMessage(chat, { text: `ℹ️ auto-peek is already *${s.auto ? 'armed (ON)' : 'disarmed (OFF)'}*.` }, { quoted: msg });
             }
             s.auto = wantOn;
             write(s);
-            return sock.sendMessage(chat, {
-                text: s.auto ? '👁️ auto-peek armed.' : '👁️ auto-peek disarmed.'
-            }, { quoted: msg });
+            return sock.sendMessage(chat, { text: s.auto ? '👁️ auto-peek armed.' : '👁️ auto-peek disarmed.' }, { quoted: msg });
         }
 
         if (a0 === 'watch') {
             if (a1 !== 'on' && a1 !== 'off') {
-                return sock.sendMessage(chat, {
-                    text: '👁️ use _.peek watch on_ or _.peek watch off_'
-                }, { quoted: msg });
+                return sock.sendMessage(chat, { text: '👁️ use _.peek watch on_ or _.peek watch off_' }, { quoted: msg });
             }
             const wantOn = a1 === 'on';
             if (s.watchQuoted === wantOn) {
-                return sock.sendMessage(chat, {
-                    text: `ℹ️ quoted-watcher is already *${s.watchQuoted ? 'armed (ON)' : 'disarmed (OFF)'}*.`
-                }, { quoted: msg });
+                return sock.sendMessage(chat, { text: `ℹ️ quoted-watcher is already *${s.watchQuoted ? 'armed (ON)' : 'disarmed (OFF)'}*.` }, { quoted: msg });
             }
             s.watchQuoted = wantOn;
             write(s);
@@ -416,15 +417,11 @@ export async function peekCommand(sock, chat, msg, args) {
 
         if (a0 === 'dest') {
             if (!['owner', 'same', 'both'].includes(a1)) {
-                return sock.sendMessage(chat, {
-                    text: '👁️ destination must be one of: owner, same, both'
-                }, { quoted: msg });
+                return sock.sendMessage(chat, { text: '👁️ destination must be one of: owner, same, both' }, { quoted: msg });
             }
             s.dest = a1;
             write(s);
-            return sock.sendMessage(chat, {
-                text: `👁️ peek destination set to *${a1}*.`
-            }, { quoted: msg });
+            return sock.sendMessage(chat, { text: `👁️ peek destination set to *${a1}*.` }, { quoted: msg });
         }
 
         return sock.sendMessage(chat, { text: `👁️ unknown option _${a0}_.` }, { quoted: msg });
@@ -463,18 +460,14 @@ export async function peekCommand(sock, chat, msg, args) {
     }
 
     if (!vo) {
-        return sock.sendMessage(chat, {
-            text: '👁️ that message is not a view-once (or content has expired).'
-        }, { quoted: msg });
+        return sock.sendMessage(chat, { text: '👁️ that message is not a view-once (or content has expired).' }, { quoted: msg });
     }
 
     const originalMsg = { key: msg.key, message: quoted };
     const result = await revealViewOnce(sock, chat, originalMsg, vo, { quotedMsg: msg });
 
     if (!result.ok) {
-        return sock.sendMessage(chat, {
-            text: "👁️ couldn't retrieve that view-once — content may have expired."
-        }, { quoted: msg });
+        return sock.sendMessage(chat, { text: "👁️ couldn't retrieve that view-once — content may have expired." }, { quoted: msg });
     }
 
     if (DEBUG) console.log('[peek:cmd] succeeded via', result.method);
@@ -492,8 +485,6 @@ export async function autoPeek(sock, msg) {
     const chat = msg.key?.remoteJid;
     const sender = msg.key?.participant || chat;
     if (chat?.endsWith('@newsletter') || sender?.endsWith('@newsletter')) return;
-
-    // ── Skip owner DM — prevents spam loop ──
     if (isOwnerChat(msg.key?.remoteJid)) return;
 
     if (msg.key?.isViewOnce === true && !msg.message) {
@@ -518,10 +509,7 @@ export async function autoPeek(sock, msg) {
     if (s.dest === 'same'  || s.dest === 'both') targets.push(originChat);
 
     for (const target of targets) {
-        const result = await revealViewOnce(sock, target, msg, vo, {
-            mentionSender: voSender,
-            prefix
-        });
+        const result = await revealViewOnce(sock, target, msg, vo, { mentionSender: voSender, prefix });
         if (DEBUG) console.log('[peek:auto]', target, '→', result.method, result.ok);
     }
 }
@@ -533,8 +521,14 @@ export async function autoPeek(sock, msg) {
 //  quotes a view-once, their phone embedded the
 //  real content in contextInfo.quotedMessage.
 //  We extract it and send it straight to your DM.
+//
+//  WHY THIS IS THE RIGHT APPROACH (per Baileys
+//  issue #1213/#1789): WhatsApp now sends only an
+//  empty stub for the original view-once, and the
+//  full content never arrives as a separate event.
+//  The reply's contextInfo.quotedMessage is the
+//  only place the media node still exists.
 // ─────────────────────────────────────────────
-// Short, media-free description of a quoted message (for debug reports).
 function describeQuote(ctx) {
     const q = ctx?.quotedMessage || {};
     const lines = [`quoted keys: ${Object.keys(q).join(', ') || '(none)'}`];
@@ -557,8 +551,14 @@ function describeQuote(ctx) {
     return lines.join('\n');
 }
 
-const inFlight = new Set();   // stanzaIds being captured right now
-const attempts = new Map();   // stanzaId → failed attempts (give up after 2)
+const inFlight = new Set();
+const attempts = new Map();
+
+// The bot's own capture output — never re-capture it. This is a precise
+// loop-prevention check that replaces the two over-broad guards
+// (`isOwnerChat(chat)` and `msg.key.fromMe`) that used to eat every
+// legitimate reply-to-view-once, including the owner's own replies.
+const OWN_CAPTURE_PREFIX = /^[👁️📎]\s*\*?(peek|auto-peek)/;
 
 export async function watchQuotedViewOnce(sock, msg) {
     const s = read();
@@ -569,13 +569,7 @@ export async function watchQuotedViewOnce(sock, msg) {
     if (!chat || chat === 'status@broadcast') return;
     if (chat.endsWith('@newsletter') || sender?.endsWith('@newsletter')) return;
 
-    // Skip the owner's own DM — prevents a capture loop.
-    if (isOwnerChat(chat)) return;
-
-    // The owner's own replies are skipped (they already have the media); everything else is captured.
-    if (msg.key?.fromMe) return;
-
-    // Skip commands — the user is handling it manually.
+    // Extract text early so we can test for our own capture output.
     const body = (
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
@@ -583,6 +577,16 @@ export async function watchQuotedViewOnce(sock, msg) {
         msg.message?.videoMessage?.caption ||
         ''
     ).trim();
+
+    // ── LOOP PREVENTION (replaces the old isOwnerChat / fromMe guards) ──
+    // Only skip the bot's own *capture* output. Ordinary owner replies
+    // (fromMe) and DM captures are exactly what we want to process.
+    if (msg.key?.fromMe && OWN_CAPTURE_PREFIX.test(body)) {
+        if (DEBUG) console.log('[peek:watch] skipping own capture output');
+        return;
+    }
+
+    // Skip commands — user is handling manually via .peek.
     if (body && body.startsWith(getPrefix())) return;
 
     const ctx = extractContextInfo(msg);
@@ -593,8 +597,8 @@ export async function watchQuotedViewOnce(sock, msg) {
 
     const vo = extractAnyMedia({ message: ctx.quotedMessage });
 
-    // Debug report — always emits what WhatsApp actually delivered inside the quote,
-    // even when no media node was found (that's the most useful case for diagnosis).
+    // Debug report — always emits what WhatsApp actually delivered, even
+    // when no media node was found. This is the most useful diagnostic.
     if (s.debug && !seenQuoted.has('dbg:' + quotedId)) {
         seenQuoted.set('dbg:' + quotedId, Date.now());
         const report = `🛠️ *peek debug*\ndetected media: ${vo ? vo.type + (vo.viewOnce ? ' (view-once)' : '') : 'NONE'}\n${describeQuote(ctx)}`;
@@ -604,6 +608,8 @@ export async function watchQuotedViewOnce(sock, msg) {
     if (!vo) return;
 
     inFlight.add(quotedId);
+    // Per Baileys issue #2392, ctx.participant may be a LID — treat it as
+    // an opaque routing identity. getBestUserJid is best-effort.
     const originalSender = ctx.participant || msg.key.participant || msg.key.remoteJid;
     const owner = ownerJid();
 
@@ -612,8 +618,9 @@ export async function watchQuotedViewOnce(sock, msg) {
         console.log('[peek:watch] quoted', vo.viewOnce ? 'view-once' : 'media', quotedId, vo.type,
             '| mediaKey:', !!vo.node.mediaKey, '| directPath:', !!vo.node.directPath, '| url:', !!vo.node.url);
 
-        // Always attempt the reveal — revealViewOnce tries download first, then forward.
-        // The old hasKeys gate silently skipped forward-only captures.
+        // Always attempt the reveal. The old hasKeys gate skipped the
+        // forward-only path entirely; revealViewOnce already tries download
+        // first, then forward.
         const result = await revealViewOnce(sock, owner, msg, vo, {
             mentionSender: originalSender,
             prefix: vo.viewOnce
@@ -628,7 +635,7 @@ export async function watchQuotedViewOnce(sock, msg) {
             return;
         }
 
-        // ── Failed: tell the owner why (never fail silently) ──
+        // ── Failed: tell the owner why ──
         if (!hasKeys) console.log('[peek:watch] quote detail:', describeQuote(ctx).replace(/\n/g, ' | '));
         const tries = (attempts.get(quotedId) || 0) + 1;
         attempts.set(quotedId, tries);
@@ -637,15 +644,19 @@ export async function watchQuotedViewOnce(sock, msg) {
             : 'download failed (media expired or deleted from WhatsApp servers)';
         console.log(`[peek:watch] ❌ ${quotedId} (${vo.type}) — ${reason} [try ${tries}]`);
 
-        // Plain (non view-once) media fails quietly; view-once failures are always reported.
         if (tries >= 2 || !hasKeys) {
             seenQuoted.set(quotedId, Date.now());
             attempts.delete(quotedId);
         }
         if (vo.viewOnce && (tries >= 2 || !hasKeys)) {
             let bestSender = null;
-            try { bestSender = await getBestUserJid(originalSender, sock, owner); }
-            catch (e) { if (DEBUG) console.log('[peek:mention] resolve failed (fail-note):', e.message); }
+            try {
+                bestSender = await withTimeout(
+                    getBestUserJid(originalSender, sock, owner), 4000, 'jid-resolve(fail-note)'
+                );
+            } catch (e) {
+                if (DEBUG) console.log('[peek:mention] resolve failed (fail-note):', e.message);
+            }
             const note = `👁️ *peek · couldn't capture a ${vo.type}*\n${reason}.` +
                 (bestSender ? `\nfrom @${digitsOf(bestSender)}` : '');
             const thumb = vo.node.jpegThumbnail;
@@ -667,4 +678,4 @@ export async function watchQuotedViewOnce(sock, msg) {
     } finally {
         inFlight.delete(quotedId);
     }
-    }
+                }
