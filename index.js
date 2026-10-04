@@ -63,7 +63,30 @@ if (!process.env.UV_THREADPOOL_SIZE) {
 // ─────────────────────────────────────────────
 const SOURCE = 'https://github.com/themalik-g/al-jin-lite.git';
 const BRANCH = process.env.WRAITH_BRANCH || 'main';
-const HARDCODED_BOT_NUMBER = '';
+
+// ─────────────────────────────────────────────
+//  ▸ PAIRING_NUMBER  ◂
+// ─────────────────────────────────────────────
+//  Hardcode a WhatsApp number here to auto-pair on startup.
+//
+//  • Leave it as '' (empty string)
+//        → normal startup: the wizard ASKS you for the number.
+//
+//  • Set it to digits (10–15 digits, country code + number)
+//        → that number is used AUTOMATICALLY to request the
+//          pairing code. No prompt, no waiting.
+//
+//  Accepted formats (all sanitized internally):
+//      '923001234567'
+//      '+92 300 1234567'
+//      '+923001234567'
+//      923001234567          (number, not string — works too)
+//
+//  Precedence:  CLI --phone=…  >  Pairing_Number  >  env  >  null
+//  Env fallback keys: WRAITH_PHONE / WRAITH_NUMBER
+// ─────────────────────────────────────────────
+const Pairing_Number = ''; // ← put your number here, e.g. '923001234567'
+
 const CLONE_TIMEOUT = 180_000;
 const INSTALL_TIMEOUT = 300_000;
 const LINK_WAIT_MS = 300_000;
@@ -97,11 +120,12 @@ const veil = () => {
 
 // ─────────────────────────────────────────────
 // 5. Configured phone number resolution
-//    Priority: CLI arg > hardcoded > env > null
+//    Priority:  CLI arg  >  Pairing_Number  >  env  >  null
 // ─────────────────────────────────────────────
 const PHONE_RE = /^\d{10,15}$/;
 
 function resolveConfiguredPhone(argv = process.argv, env = process.env) {
+  // 1) CLI override  --phone=…  /  --number=…
   const cli = argv.find(
     a => a.startsWith('--phone=') || a.startsWith('--number=')
   );
@@ -114,19 +138,46 @@ function resolveConfiguredPhone(argv = process.argv, env = process.env) {
     );
   }
 
-  if (HARDCODED_BOT_NUMBER && PHONE_RE.test(HARDCODED_BOT_NUMBER)) {
-    return HARDCODED_BOT_NUMBER;
+  // 2) Hardcoded Pairing_Number (takes priority over env).
+  //    Sanitize: strip +, spaces, dashes, and coerce to string so
+  //    '+92 300 1234567' / 923001234567 (number) both work.
+  if (Pairing_Number !== '' && Pairing_Number != null) {
+    const digits = String(Pairing_Number).replace(/\D/g, '');
+    if (PHONE_RE.test(digits)) {
+      return digits;
+    }
+    console.warn(
+      clock(),
+      red(
+        `ignoring invalid Pairing_Number "${Pairing_Number}" — must be 10–15 digits`
+      )
+    );
   }
 
+  // 3) Env fallback:  WRAITH_PHONE / WRAITH_NUMBER
   const fromEnv = (env.WRAITH_PHONE || env.WRAITH_NUMBER || '').replace(
     /\D/g,
     ''
   );
   if (PHONE_RE.test(fromEnv)) return fromEnv;
+
+  // 4) Nothing configured → wizard will prompt
   return null;
 }
 
 const CONFIGURED_PHONE = resolveConfiguredPhone();
+
+// ─────────────────────────────────────────────
+// DEBUG — one-line confirmation of what was resolved.
+// Remove once pairing works if you prefer silence.
+// ─────────────────────────────────────────────
+say(
+  grey(
+    `[config] Pairing_Number="${Pairing_Number}" · ` +
+      `CONFIGURED_PHONE=${CONFIGURED_PHONE ?? 'null'} · ` +
+      `TTY=${process.stdin.isTTY}`
+  )
+);
 
 // ─────────────────────────────────────────────
 // 6. Repo / instance helpers
@@ -541,7 +592,7 @@ async function linkOne(root, label, presetNumber = null) {
     say(cyan(`using configured number +${number}`));
   } else if (!process.stdin.isTTY || !rl) {
     throw new Error(
-      'no phone number available — set WRAITH_PHONE env or pass --phone=923001234567'
+      'no phone number available — set Pairing_Number, WRAITH_PHONE env, or pass --phone=923001234567'
     );
   } else {
     number = await promptNumber(label);
@@ -569,6 +620,8 @@ async function wizard(root) {
 
   const firstLabel = ADD_MODE ? 'new number' : 'first number';
 
+  // If Pairing_Number (or CLI/env) is set, linkOne uses it directly
+  // and the interactive prompt is skipped.
   const ok1 = await linkOne(root, firstLabel, CONFIGURED_PHONE);
   if (!ok1) {
     say(red('first number failed — aborting wizard'));
@@ -591,6 +644,8 @@ async function wizard(root) {
       console.log(grey(' done — running linked session(s).\n'));
       break;
     }
+    // Subsequent numbers always prompt (no preset) — Pairing_Number
+    // applies only to the first/primary session.
     const ok = await linkOne(root, 'next number');
     if (!ok) {
       console.log(grey(' aborting further links.\n'));
@@ -657,10 +712,14 @@ process.on('SIGTERM', () => quiet('SIGTERM'));
         return;
       }
 
-      say(red('[non-interactive] no linked sessions and no WRAITH_PHONE set'));
+      say(
+        red(
+          '[non-interactive] no linked sessions and no Pairing_Number / WRAITH_PHONE set'
+        )
+      );
       say(
         grey(
-          '  → set WRAITH_PHONE=923001234567 in your env, or run once interactively'
+          '  → set Pairing_Number = "923001234567" in index.js, or WRAITH_PHONE=923001234567 in env, or run once interactively'
         )
       );
       process.exit(0);
