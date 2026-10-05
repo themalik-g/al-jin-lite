@@ -3,7 +3,6 @@ import { remember, revealDelete, revealEdit, revealSecretEdit, ghostCommand, cla
 import { logMessageHistory } from './modules/logger.js';
 import { peekCommand, autoPeek, watchQuotedViewOnce } from './modules/peek.js';
 import { lurkCommand, lurkTick } from './modules/lurk.js';
-import { captureStatusStory } from './core/status-store.js';
 import { adminAction, toggleProtection, handleProtection } from './modules/admin.js';
 import { presenceCommand, shouldReadReceipts, applyAutoPresence } from './modules/presence.js';
 import { activityCommand, trackActivity } from './modules/activity.js';
@@ -15,8 +14,6 @@ import { CONFIG } from './config.js';
 import { reqlocationCommand, handleIncomingLocation } from './modules/location.js';
 import { WAMessageStubType } from '@whiskeysockets/baileys';
 import { extractInteractiveResponse, matchChoice } from './lib/buttons.js';
-import { handlePollVote } from './lib/pollmode.js';
-import { EMOJIS, getCommandCategoryEmoji, reactMsg } from './lib/reaction-helper.js';
 // extras pack (modules/x-*.js)
 import { onMessage as xOnMessage, resolveAlias as xResolveAlias } from './modules/x-hooks.js';
 import { hasExtra as xHasExtra, runExtra as xRunExtra } from './modules/x-registry.js';
@@ -41,12 +38,12 @@ function lazy(modPath, fnName) {
 
 // ── Cold handlers (only loaded when the command is invoked) ──
 const pingCommand     = lazy('./modules/ping.js', 'pingCommand');
+const aliveCommand    = lazy('./modules/ping.js', 'aliveCommand');
+const uptimeCommand   = lazy('./modules/ping.js', 'uptimeCommand');
 const cpuCommand      = lazy('./modules/ping.js', 'cpuCommand');
 const gpuCommand      = lazy('./modules/ping.js', 'gpuCommand');
 const ramCommand      = lazy('./modules/ping.js', 'ramCommand');
 const romCommand      = lazy('./modules/ping.js', 'romCommand');
-const aliveCommand    = lazy('./modules/ping.js', 'aliveCommand');
-const uptimeCommand   = lazy('./modules/ping.js', 'uptimeCommand');
 const restartCommand  = lazy('./modules/ping.js', 'restartCommand');
 const helpCommand     = lazy('./modules/help.js', 'helpCommand');
 const getppCommand    = lazy('./modules/profile.js', 'getppCommand');
@@ -56,7 +53,6 @@ const prefixCommand   = lazy('./modules/prefix.js', 'prefixCommand');
 const dlCommand       = lazy('./modules/download.js', 'ytdlCommand');
 const mp3Command      = lazy('./modules/download.js', 'mp3Command');
 const pdlCommand      = lazy('./modules/download.js', 'pdlCommand');
-const pdlzipCommand   = lazy('./modules/download.js', 'pdlzipCommand');
 const twitterCommand  = lazy('./modules/download.js', 'twitterCommand');
 const pinterestCommand= lazy('./modules/download.js', 'pinterestCommand');
 const threadsCommand  = lazy('./modules/download.js', 'threadsCommand');
@@ -67,37 +63,23 @@ const usermanualCommand = lazy('./modules/usermanual.js', 'usermanualCommand');
 const detailsCommand    = lazy('./modules/details.js', 'detailsCommand');
 const settingsCommand   = lazy('./modules/settings-cmd.js', 'settingsCommand');
 const forwardCommand    = lazy('./modules/forward.js', 'forwardCommand');
-const ytcookiesCommand  = lazy('./modules/ytcookies.js', 'ytcookiesCommand');
 const fetchCommand      = lazy('./modules/fetch.js', 'fetchCommand');
 const dpFromMessage     = lazy('./dp.mjs', 'dpFromMessage');
 
-const exifwipeCommand    = lazy('./modules/media-tools.js', 'exifwipeCommand');
-const trimCommand        = lazy('./modules/media-tools.js', 'trimCommand');
-const tomp3Command       = lazy('./modules/media-tools.js', 'tomp3Command');
-const vnCommand          = lazy('./modules/media-tools.js', 'vnCommand');
-const compressCommand    = lazy('./modules/media-tools.js', 'compressCommand');
+const exifwipeCommand    = lazy('./modules/stickers.js', 'exifwipeCommand');
 
-const ocrCommand         = lazy('./modules/tools.js', 'ocrCommand');
-const barcodeCommand     = lazy('./modules/tools.js', 'barcodeCommand');
 const vcardCommand       = lazy('./modules/tools.js', 'vcardCommand');
-const ttsCommand         = lazy('./modules/tools.js', 'ttsCommand');
 
 const speedtestCommand   = lazy('./modules/network-tools.js', 'speedtestCommand');
 const npmCommand         = lazy('./modules/network-tools.js', 'npmCommand');
 const unrollCommand      = lazy('./modules/network-tools.js', 'unrollCommand');
-const web2imgCommand     = lazy('./modules/network-tools.js', 'web2imgCommand');
 const tempmailCommand    = lazy('./modules/network-tools.js', 'tempmailCommand');
 const readmailCommand    = lazy('./modules/network-tools.js', 'readmailCommand');
 const whatanimeCommand   = lazy('./modules/network-tools.js', 'whatanimeCommand');
 const githubdiffCommand  = lazy('./modules/network-tools.js', 'githubdiffCommand');
 const urbanCommand       = lazy('./modules/network-tools.js', 'urbanCommand');
 
-const waveformCommand    = lazy('./modules/media-tools.js', 'waveformCommand');
-const audio8dCommand     = lazy('./modules/media-tools.js', 'audio8dCommand');
-const bassboostCommand   = lazy('./modules/media-tools.js', 'bassboostCommand');
-const robotCommand       = lazy('./modules/media-tools.js', 'robotCommand');
-const vocalCommand       = lazy('./modules/media-tools.js', 'vocalCommand');
-const enhanceCommand     = lazy('./modules/media-tools.js', 'enhanceCommand');
+const enhanceCommand     = lazy('./modules/stickers.js', 'enhanceCommand');
 
 const channelinfoCommand = lazy('./modules/utility.js', 'channelinfoCommand');
 const unitCommand        = lazy('./modules/utility.js', 'unitCommand');
@@ -136,13 +118,11 @@ const jokeCommand     = lazy('./modules/utility.js', 'jokeCommand');
 const adviceCommand   = lazy('./modules/utility.js', 'adviceCommand');
 const factCommand     = lazy('./modules/utility.js', 'factCommand');
 
-const bookCommand     = lazy('./modules/media.js', 'bookCommand');
 const imageCommand    = lazy('./modules/media.js', 'imageCommand');
 const movieCommand    = lazy('./modules/media.js', 'movieCommand');
 const songInfoCommand = lazy('./modules/media.js', 'songCommand');
 const lyricsCommand   = lazy('./modules/media.js', 'lyricsCommand');
 const coupleppCommand = lazy('./modules/media.js', 'coupleppCommand');
-const pptCommand      = lazy('./modules/ppt.js', 'pptCommand');
 
 const welcomeCommand    = lazy('./modules/group.js', 'welcomeCommand');
 const goodbyeCommand    = lazy('./modules/group.js', 'goodbyeCommand');
@@ -198,7 +178,6 @@ const watchCommand = lazy('./modules/spy.js', 'watchCommand');
 const ginfoCommand = lazy('./modules/spy.js', 'ginfoCommand');
 const stickerCommand = lazy('./modules/stickers.js', 'stickerCommand');
 const toimgCommand = lazy('./modules/stickers.js', 'toimgCommand');
-const tovidCommand = lazy('./modules/stickers.js', 'tovidCommand');
 const fancyCommand = lazy('./modules/fun.js', 'fancyCommand');
 const diceCommand = lazy('./modules/fun.js', 'diceCommand');
 const coinCommand = lazy('./modules/fun.js', 'coinCommand');
@@ -210,10 +189,10 @@ const photoCommand  = lazy('./modules/gemini.js', 'photoCommand');
 const pinchatCommand   = lazy('./modules/pin.js', 'pinchatCommand');
 const unpinchatCommand = lazy('./modules/pin.js', 'unpinchatCommand');
 const disappearingCommand = lazy('./modules/disappearing.js', 'disappearingCommand');
-const playCommand   = lazy('./modules/ytdlp-commands.js', 'playCommand');
-const ytvCommand    = lazy('./modules/ytdlp-commands.js', 'ytvCommand');
-const videoCommand  = lazy('./modules/ytdlp-commands.js', 'videoCommand');
-const ytdlCommand   = lazy('./modules/ytdlp-commands.js', 'ytdlCommand');
+const playCommand   = lazy('./modules/yt-esm.js', 'playCommand');
+const ytvCommand    = lazy('./modules/yt-esm.js', 'ytvCommand');
+const videoCommand  = lazy('./modules/yt-esm.js', 'videoCommand');
+const ytdlCommand   = lazy('./modules/yt-esm.js', 'ytdlCommand');
 const wpCommand     = lazy('./modules/theme.js', 'wpCommand');
 const dpCommand     = lazy('./modules/theme.js', 'dpCommand');
 
@@ -224,7 +203,6 @@ const apkCommand      = lazy('./modules/apk.js', 'apkCommand');
 const betaApkCommand  = lazy('./modules/apk.js', 'betaApkCommand');
 const mobileinfoCommand = lazy('./modules/devices.js', 'mobileinfoCommand');
 const laptopinfoCommand = lazy('./modules/devices.js', 'laptopinfoCommand');
-const igzipCommand     = lazy('./modules/igplus.js', 'igzipCommand');
 const igstoryCommand   = lazy('./modules/igplus.js', 'igstoryCommand');
 const igsearchCommand  = lazy('./modules/igplus.js', 'igsearchCommand');
 const igprofileCommand = lazy('./modules/igplus.js', 'igprofileCommand');
@@ -273,7 +251,7 @@ function getEphotoList() {
 
 // ─────────────────────────────────────────────
 const CRITICAL_COMMANDS = new Set([
-  'ghost', 'peek', 'lurk', 'schedule', 'disappearing', 'hddp', 'fulldp',
+  'ghost', 'setdest', 'peek', 'lurk', 'schedule', 'disappearing', 'hddp', 'fulldp',
   'kick', 'add', 'promote', 'demote',
   'antilink', 'antispam', 'antisticker',
   'presence', 'activity',
@@ -285,8 +263,8 @@ const CRITICAL_COMMANDS = new Set([
   'addsession', 'delsession', 'replymode',
   'setvar', 'getvar', 'delvar',
   'addowner', 'delowner', 'ownerlist',
-  'gitdl', 'mfdl', 'url', 'pdl', 'pdlzip', 'restart', 'pinchat', 'unpinchat', 'pdd', 'tag',
-  'ytcookies', 'igzip', 'igstory', 'igsearch', 'igprofile',
+  'restart', 'pinchat', 'unpinchat', 'pdd',
+  'cpu', 'gpu', 'ram', 'rom',
 ]);
 
 const attachedSockets = new WeakSet();
@@ -362,17 +340,12 @@ function plainText(msg) {
           return `${prefix}peek ${lowerD}`;
         }
       }
-      if (lowerQ.includes('books') || lowerQ.includes('book')) {
-        const match = lowerD.match(/^(?:dl\s*)?(\d+)$/i);
-        if (match) return `${prefix}book dl ${match[1]}`;
-      }
     }
     return direct;
   }
 
   const interactiveId = extractInteractiveResponse(msg);
   if (interactiveId) {
-    if (interactiveId.startsWith('book_dl_')) return `${prefix}book dl ${interactiveId.replace('book_dl_', '')}`;
     if (interactiveId.startsWith('menu_')) return `${prefix}help ${interactiveId.replace('menu_', '')}`;
     if (interactiveId.startsWith('.')) return prefix === '.' ? interactiveId : prefix + interactiveId.slice(1);
     if (!interactiveId.startsWith(prefix)) return `${prefix}${interactiveId}`;
@@ -401,21 +374,14 @@ export async function dispatch(sock, update, sessionId = 'main') {
       const chat = msg.key.remoteJid;
       if (!chat) continue;
 
-      // Poll-mode votes: every newly ticked option runs its command
-      if (msg.message?.pollUpdateMessage) {
-        try { await handlePollVote(sock, msg, dispatch); } catch (e) { console.error('[router] pollVote', e.message); }
-        continue;
-      }
-
       // Resolve LID senders (owners / secondary owners / developer) first
       await primeSenderIdentity(sock, msg);
 
-      const synthetic = !!msg._synthetic;
-      try { if (!synthetic) trackActivity(chat, msg, plainText(msg)); } catch (e) { console.error('[router] trackActivity', e.message); }
+      try { trackActivity(chat, msg, plainText(msg)); } catch (e) { console.error('[router] trackActivity', e.message); }
       try { cacheChannelFromMessage(msg); } catch (e) { console.error('[router] cacheChannelFromMessage', e.message); }
 
       try {
-        if (shouldReadReceipts() && !msg._synthetic && !msg.key.fromMe && chat !== 'status@broadcast') {
+        if (shouldReadReceipts() && !msg.key.fromMe && chat !== 'status@broadcast') {
           await sock.readMessages([msg.key]);
         }
       } catch (e) { console.error('[router] readReceipts', e.message); }
@@ -434,11 +400,11 @@ export async function dispatch(sock, update, sessionId = 'main') {
       }
       if (kind === 'secret_edit') { await revealSecretEdit(sock, msg); continue; }
 
-      try { if (!synthetic) await remember(sock, msg); } catch (e) { console.error('[router] remember', e.message); }
-      try { if (!synthetic) await autoPeek(sock, msg); } catch (e) { console.error('[router] autoPeek', e.message); }
-      try { if (!synthetic) await watchQuotedViewOnce(sock, msg); } catch (e) { console.error('[router] watchQuotedViewOnce', e.message); }
+      try { await remember(sock, msg); } catch (e) { console.error('[router] remember', e.message); }
+      try { await autoPeek(sock, msg); } catch (e) { console.error('[router] autoPeek', e.message); }
+      try { await watchQuotedViewOnce(sock, msg); } catch (e) { console.error('[router] watchQuotedViewOnce', e.message); }
 
-      if (!synthetic) try {
+      try {
         const msgId = msg.key?.id;
         const ledgerRec = getLedgerEntry(msgId);
         const sender = msg.key.participant || msg.key.remoteJid || 'N/A';
@@ -513,9 +479,9 @@ export async function dispatch(sock, update, sessionId = 'main') {
       const KNOWN = new Set([...CRITICAL_COMMANDS, ...EPHOTO_LIST,
         'dl', 'download', 'mp3', 'songinfo', 'help', 'menu', 'ping', 'usermanual',
         'currency', 'qr', 'define', 'weather', 'pwned', 'owner', 'script', 'repo',
-        'book', 'books', 'img', 'image', 'movie', 'lyrics', 'ppt', 'couplepp',
+        'img', 'image', 'movie', 'lyrics', 'couplepp',
         'welcome', 'goodbye', 'getpp', 'ig', 'tiktok', 'fb',
-        'igpost', 'tiktokpost', 'fbpost', 'pdl', 'pdlzip', 'postdl',
+        'igpost', 'tiktokpost', 'fbpost', 'pdl', 'postdl',
         'alive', 'uptime', 'restart', 'replymode', 'reqlocation', 'cpu', 'gpu', 'ram', 'rom',
         'twitter', 'tw', 'pinterest', 'pin', 'threads', 'reddit', 'youtube', 'yt',
         'gemini', 'scholar', 'scholor', 'photo', 'imagine', 'imagen', 'pinchat', 'unpinchat', 'disappearing', 'play', 'ytv', 'video', 'ytdl',
@@ -523,65 +489,45 @@ export async function dispatch(sock, update, sessionId = 'main') {
         'wp', 'dp', 'resetwp',
         'prayertimes', 'pts', 'quran', 'sora', 'para', 'muslim', 'bukhari', 'search',
         'islamic', 'hadith', 'quransearch', 'hadeessearch', 'islamsearch', 'qs', 'hs', 'is',
-        'relocation', 'details', 'settings', 'forward', 'ytcookies', 'fetch',
-        'exifwipe', 'sanitize', 'trim', 'tomp3', 'vn', 'compress', 'extracompress',
-        'ocr', 'readtext', 'barcode', 'vcard', 'tts',
-        'speedtest', 'npm', 'unroll', 'web2img', 'webss', 'tempmail', 'readmail', 'whatanime',
-        'githubdiff', 'urban', 'slang', 'gali', 'waveform', '8d', 'bassboost', 'robot', 'vocal', 'hd', 'enhance',
+        'relocation', 'details', 'settings', 'forward', 'fetch',
+        'exifwipe', 'sanitize', 'vcard', 'speedtest', 'npm', 'unroll', 'tempmail', 'readmail', 'whatanime',
+        'githubdiff', 'urban', 'slang', 'gali', 'hd', 'enhance',
         'channelinfo', 'unit', 'commandcount', 'meme', 'gclone', 'revoke', 'gshield', 'fakereply',
         'antipromote', 'antidemote', 'purge', 'antibot', 'warn', 'warns', 'resetwarns', 'privacy', 'stealfull',
         'hddp', 'fulldp',
         'tagallnoadmin', 'hidetagnoadmin', 'apk', 'betaapk', 'mobileinfo', 'laptopinfo',
-        'igzip', 'igstory', 'igsearch', 'igprofile', 'jin', 'jincreate',
+        'igstory', 'igsearch', 'igprofile', 'jin', 'jincreate',
         'gpt', 'claude', 'grok', 'deepseek', 'kimi',
         'jindl', 'jinvideo', 'jinytsearch', 'jinimage', 'jinai', 'jinapk',
       ]);
 
-      // 1) Every command starts with 🧞‍♂️ initial reaction
-      await reactMsg(sock, chat, msg.key, EMOJIS.INITIAL);
-
-      // 2) Transition to command category emoji (🔍, 📥, 📤, 🎵, 📸, 🎥, ⏳)
-      const categoryEmoji = getCommandCategoryEmoji(verb);
-      await reactMsg(sock, chat, msg.key, categoryEmoji);
+      if (KNOWN.has(verb)) {
+        try { await sock.sendMessage(chat, { react: { text: '⌛', key: msg.key } }); } catch (e) { console.error('[router] react', e.message); }
+      }
 
       const csock = sock;
 
       if (EPHOTO_LIST.includes(verb) && verb !== 'textmaker') {
-        try {
-          await handleTextmakerCommand(csock, chat, msg, verb, rest);
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        } catch (e) {
-          await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
-        }
+        await handleTextmakerCommand(csock, chat, msg, verb, rest);
         continue;
       }
 
       if (/^jin\d+$/i.test(verb)) {
-        try {
-          await jinCommand(csock, chat, msg, rest, Number(verb.slice(3)));
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        } catch (e) {
-          await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
-        }
+        try { await sock.sendMessage(chat, { react: { text: '⌛', key: msg.key } }); } catch {}
+        await jinCommand(csock, chat, msg, rest, Number(verb.slice(3)));
         continue;
       }
       if (/^jincreate\d*$/i.test(verb)) {
-        try {
-          await jinCreateCommand(csock, chat, msg, rest, Number(verb.slice(9)) || 1);
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        } catch (e) {
-          await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
-        }
+        try { await sock.sendMessage(chat, { react: { text: '⌛', key: msg.key } }); } catch {}
+        await jinCreateCommand(csock, chat, msg, rest, Number(verb.slice(9)) || 1);
         continue;
       }
 
       if (xHasExtra(verb)) {
-        try {
-          await xRunExtra(csock, chat, msg, verb, rest);
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        } catch (e) {
+        try { await sock.sendMessage(chat, { react: { text: '⌛', key: msg.key } }); } catch {}
+        try { await xRunExtra(csock, chat, msg, verb, rest); }
+        catch (e) {
           console.error('[extras]', verb, e);
-          await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
           try { await sock.sendMessage(chat, { text: `⚠️ *command failed*\n\n\`${verb}\` — ${e.message}` }, { quoted: msg }); } catch {}
         }
         continue;
@@ -589,18 +535,9 @@ export async function dispatch(sock, update, sessionId = 'main') {
 
       if (/^wp\d+$/i.test(verb)) {
         const num = verb.replace(/\D/g, '');
-        try {
-          await wpCommand(csock, chat, msg, rest, num);
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        } catch (e) {
-          await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
-        }
+        await wpCommand(csock, chat, msg, rest, num);
         continue;
       }
-
-      // Handlers in modules manage their final state (☑ or ❌) when handling long operations / errors.
-      // For general commands, default success reaction is set if no uncaught error occurs.
-      let cmdFailed = false;
 
       try {
         switch (verb) {
@@ -610,7 +547,6 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'betaapk': await betaApkCommand(csock, chat, msg, rest); break;
           case 'mobileinfo': await mobileinfoCommand(csock, chat, msg, rest); break;
           case 'laptopinfo': await laptopinfoCommand(csock, chat, msg, rest); break;
-          case 'igzip': await igzipCommand(csock, chat, msg, rest); break;
           case 'igstory': await igstoryCommand(csock, chat, msg, rest); break;
           case 'igsearch': await igsearchCommand(csock, chat, msg, rest); break;
           case 'igprofile': await igprofileCommand(csock, chat, msg, rest); break;
@@ -628,15 +564,16 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'jinai': await jinaiCommand(csock, chat, msg, rest); break;
           case 'jinapk': await jinapkCommand(csock, chat, msg, rest); break;
           case 'ghost': await ghostCommand(csock, chat, msg, rest); break;
+          case 'setdest': await ghostCommand(csock, chat, msg, ['dest', ...rest]); break;
           case 'peek': await peekCommand(csock, chat, msg, rest); break;
           case 'lurk': await lurkCommand(csock, chat, msg, rest); break;
           case 'ping': await pingCommand(csock, chat, msg); break;
+          case 'alive': await aliveCommand(csock, chat, msg); break;
+          case 'uptime': await uptimeCommand(csock, chat, msg); break;
           case 'cpu': await cpuCommand(csock, chat, msg); break;
           case 'gpu': await gpuCommand(csock, chat, msg); break;
           case 'ram': await ramCommand(csock, chat, msg); break;
           case 'rom': await romCommand(csock, chat, msg); break;
-          case 'alive': await aliveCommand(csock, chat, msg); break;
-          case 'uptime': await uptimeCommand(csock, chat, msg); break;
           case 'restart': await restartCommand(csock, chat, msg); break;
           case 'reset': {
             const target = (rest[0] || '').toLowerCase();
@@ -672,7 +609,6 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'mp3': await mp3Command(csock, chat, msg, rest); break;
           case 'pdl':
           case 'postdl': await pdlCommand(csock, chat, msg, rest); break;
-          case 'pdlzip': await pdlzipCommand(csock, chat, msg, rest); break;
           case 'twitter':
           case 'tw': await twitterCommand(csock, chat, msg, rest); break;
           case 'pinterest':
@@ -696,25 +632,13 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'details': await detailsCommand(csock, chat, msg, rest); break;
           case 'settings': await settingsCommand(csock, chat, msg); break;
           case 'forward': await forwardCommand(csock, chat, msg, rest); break;
-          case 'ytcookies': await ytcookiesCommand(csock, chat, msg, rest); break;
           case 'fetch': await fetchCommand(csock, chat, msg, rest); break;
           case 'exifwipe':
           case 'sanitize': await exifwipeCommand(csock, chat, msg); break;
-          case 'trim': await trimCommand(csock, chat, msg, rest); break;
-          case 'tomp3': await tomp3Command(csock, chat, msg); break;
-          case 'vn': await vnCommand(csock, chat, msg); break;
-          case 'compress': await compressCommand(csock, chat, msg, rest, false); break;
-          case 'extracompress': await compressCommand(csock, chat, msg, rest, true); break;
-          case 'ocr':
-          case 'readtext': await ocrCommand(csock, chat, msg, rest); break;
-          case 'barcode': await barcodeCommand(csock, chat, msg, rest); break;
           case 'vcard': await vcardCommand(csock, chat, msg, rest); break;
-          case 'tts': await ttsCommand(csock, chat, msg, rest); break;
           case 'speedtest': await speedtestCommand(csock, chat, msg); break;
           case 'npm': await npmCommand(csock, chat, msg, rest); break;
           case 'unroll': await unrollCommand(csock, chat, msg, rest); break;
-          case 'web2img':
-          case 'webss': await web2imgCommand(csock, chat, msg, rest); break;
           case 'tempmail': await tempmailCommand(csock, chat, msg, rest); break;
           case 'readmail': await readmailCommand(csock, chat, msg, rest); break;
           case 'whatanime': await whatanimeCommand(csock, chat, msg); break;
@@ -722,11 +646,6 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'urban':
           case 'slang':
           case 'gali': await urbanCommand(csock, chat, msg, rest); break;
-          case 'waveform': await waveformCommand(csock, chat, msg); break;
-          case '8d': await audio8dCommand(csock, chat, msg); break;
-          case 'bassboost': await bassboostCommand(csock, chat, msg, rest); break;
-          case 'robot': await robotCommand(csock, chat, msg); break;
-          case 'vocal': await vocalCommand(csock, chat, msg); break;
           case 'hd':
           case 'enhance': await enhanceCommand(csock, chat, msg); break;
           case 'channelinfo': await channelinfoCommand(csock, chat, msg, rest); break;
@@ -808,7 +727,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
               await sock.sendMessage(chat, { text: `✅ Reply mode set to *${modeArg}*` }, { quoted: msg });
             } else {
               const cur = getReplyMode();
-              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode text\`\n• \`${prefix}replymode poll\`` }, { quoted: msg });
+              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode text\` — numbered replies\n• \`${prefix}replymode poll\` — multi-select poll: every newly ticked option runs; the poll stays open and is deleted when its time is up` }, { quoted: msg });
             }
             break;
           }
@@ -820,13 +739,10 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'hs': await hadeessearchCommand(csock, chat, msg, rest); break;
           case 'islamsearch':
           case 'is': await islamsearchCommand(csock, chat, msg, rest); break;
-          case 'book':
-          case 'books': await bookCommand(csock, chat, msg, rest); break;
           case 'img':
           case 'image': await imageCommand(csock, chat, msg, rest); break;
           case 'movie': await movieCommand(csock, chat, msg, rest); break;
           case 'lyrics': await lyricsCommand(csock, chat, msg, rest); break;
-          case 'ppt': await pptCommand(csock, chat, msg, rest); break;
           case 'couplepp': await coupleppCommand(csock, chat, msg, rest); break;
           case 'welcome': await welcomeCommand(csock, chat, msg, rest); break;
           case 'goodbye': await goodbyeCommand(csock, chat, msg, rest); break;
@@ -882,7 +798,6 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'sticker':
           case 's': await stickerCommand(csock, chat, msg, rest); break;
           case 'toimg': await toimgCommand(csock, chat, msg, rest); break;
-          case 'tovid': await tovidCommand(csock, chat, msg, rest); break;
           case 'fancy': await fancyCommand(csock, chat, msg, rest); break;
           case 'dice': await diceCommand(csock, chat, msg, rest); break;
           case 'coin': await coinCommand(csock, chat, msg, rest); break;
@@ -890,14 +805,8 @@ export async function dispatch(sock, update, sessionId = 'main') {
           default: break;
         }
       } catch (e) {
-        cmdFailed = true;
         console.error('[dispatch]', verb, e);
-        await reactMsg(sock, chat, msg.key, EMOJIS.FAILED);
         try { await sock.sendMessage(chat, { text: `⚠️ *command failed*\n\n\`${verb}\` — ${e.message}` }, { quoted: msg }); } catch {}
-      } finally {
-        if (!cmdFailed && KNOWN.has(verb) && !['play', 'ytv', 'video', 'ytdl', 'dl', 'download', 'mp3', 'pdl', 'pdlzip', 'url'].includes(verb)) {
-          await reactMsg(sock, chat, msg.key, EMOJIS.SUCCESS);
-        }
       }
     } catch (e) { console.error('[dispatch:outer]', e); }
   }
@@ -937,6 +846,5 @@ export async function dispatchUpdate(sock, update) {
 }
 
 export async function dispatchStatus(sock, payload) {
-  try { await captureStatusStory(sock, payload); } catch (e) { console.error('[dispatchStatus:capture]', e); }
   try { await lurkTick(sock, payload); } catch (e) { console.error('[dispatchStatus]', e); }
 }

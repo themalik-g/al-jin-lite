@@ -2,127 +2,47 @@
 // Al-Jin · modules/help.js
 // Clean single-message plain text list menu with box layout
 // ─────────────────────────────────────────────
-import fs from 'node:fs';
-import os from 'node:os';
-import crypto from 'node:crypto';
 import { isOwner } from '../core/identity.js';
 import { getPrefix } from '../core/settings.js';
-import { CONFIG } from '../config.js';
 import { newsletterContext, sendWithCta } from '../lib/buttons.js';
-import { ramSummary } from './ping.js';
 import { X_MENU } from './x-details.js';
+import { CONFIG } from '../config.js';
+import { businessStatusQuote } from '../lib/fakequote.js';
+import { ramSummary, uptimeText, detectPlatform, botVersion } from '../lib/sysinfo.js';
 
-const MENU_IMAGE = process.env.WRAITH_MENU_IMAGE || 'https://i.picrd.com/images/YZUezOztDow.jpg';
+const MENU_IMAGE = process.env.WRAITH_MENU_IMAGE || 'https://i.picrd.com/images/P6Z69uI7bfC.jpg';
 const CAPTION_MAX = 3000;
 
 // Sends the menu as ONE message. If it fits in an image caption, the banner is
 // attached; otherwise the whole menu goes out as a single text message
 // (never split into two). Falls back to plain text if the image fails.
-async function sendMenu(sock, chat, text, mentions = []) {
-  const quoted = businessQuote();
+async function sendMenu(sock, chat, text, msg, mentions = []) {
+  // Whole menu is a reply to the blue-tick "WhatsApp Business" status.
+  const quoted = businessStatusQuote();
+  const ctx = () => newsletterContext(mentions.length ? { mentionedJid: mentions } : {});
   if (text.length <= CAPTION_MAX) {
     try {
       return await sock.sendMessage(
         chat,
-        { image: { url: MENU_IMAGE }, caption: text, mentions, contextInfo: newsletterContext() },
+        { image: { url: MENU_IMAGE }, caption: text, mentions, contextInfo: ctx() },
         { quoted }
       );
     } catch (e) {
       try { console.error('[menu:image]', e?.message); } catch {}
     }
   }
+  // Menu longer than a caption (or image failed): banner first, then the full menu text.
   try {
-    return await sock.sendMessage(chat, { text, mentions, contextInfo: newsletterContext() }, { quoted });
+    await sock.sendMessage(chat, { image: { url: MENU_IMAGE }, contextInfo: ctx() }, { quoted });
+  } catch (e) {
+    try { console.error('[menu:image]', e?.message); } catch {}
+  }
+  try {
+    return await sock.sendMessage(chat, { text, mentions, contextInfo: ctx() }, { quoted });
   } catch (e) {
     try { console.error('[menu:text]', e?.message); } catch {}
-    return sendWithCta(sock, chat, text, { quoted });
+    return sendWithCta(sock, chat, text, { quoted: msg });
   }
-}
-
-// The whole menu is sent as a reply to a verified (blue-tick) "WhatsApp Business" status.
-function businessQuote() {
-  const waid = '13135550002';
-  const vcard = [
-    'BEGIN:VCARD',
-    'VERSION:3.0',
-    'N:;WhatsApp Business;;;',
-    'FN:WhatsApp Business',
-    'ORG:WhatsApp Business;',
-    `TEL;type=CELL;type=VOICE;waid=${waid}:+1 313 555 0002`,
-    'X-WA-BIZ-NAME:WhatsApp Business',
-    'X-WA-BIZ-DESCRIPTION:Official Business Account',
-    'END:VCARD',
-  ].join('\n');
-  return {
-    key: {
-      remoteJid: 'status@broadcast',
-      fromMe: false,
-      id: crypto.randomBytes(8).toString('hex').toUpperCase(),
-      participant: `${waid}@s.whatsapp.net`,
-    },
-    message: { contactMessage: { displayName: 'WhatsApp Business', vcard } },
-  };
-}
-
-// ── live info shown at the top of the menu ──────────────────────
-let BOT_VERSION = null;
-function botVersion() {
-  if (BOT_VERSION) return BOT_VERSION;
-  try {
-    BOT_VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-  } catch { BOT_VERSION = CONFIG.version || '1.0.0'; }
-  return BOT_VERSION;
-}
-
-function platformName() {
-  const e = process.env;
-  let host;
-  if (e.DYNO) host = 'Heroku';
-  else if (e.RAILWAY_ENVIRONMENT || e.RAILWAY_PROJECT_ID) host = 'Railway';
-  else if (e.RENDER) host = 'Render';
-  else if (e.KOYEB_APP_NAME) host = 'Koyeb';
-  else if (e.REPL_ID) host = 'Replit';
-  else if (e.P_SERVER_UUID) host = 'Pterodactyl';
-  else if ((e.PREFIX || '').includes('com.termux')) host = 'Termux';
-  else if (fs.existsSync('/.dockerenv')) host = 'Docker';
-  else host = 'VPS';
-  const osName = { linux: 'Linux generic', win32: 'Windows', darwin: 'macOS', android: 'Android' }[os.platform()] || os.platform();
-  return `${host} (${osName})`;
-}
-
-function fmtUptime() {
-  let s = Math.floor(process.uptime());
-  const d = Math.floor(s / 86400); s %= 86400;
-  const h = Math.floor(s / 3600); s %= 3600;
-  const m = Math.floor(s / 60);
-  return `${d ? d + 'd ' : ''}${h}h ${m}m ${s % 60}s`;
-}
-
-function menuInfo(sock, msg, prefix, isOwnerUser) {
-  const tz = CONFIG.timezone || 'UTC';
-  const now = new Date();
-  const jid = msg.key.fromMe ? (sock.user?.id || '') : (msg.key.participant || msg.key.remoteJid || '');
-  const mentionJid = String(jid).replace(/:\d+@/, '@');
-  const uniq = new Set();
-  for (const g of visibleRegistry(isOwnerUser)) for (const x of g.commands) uniq.add(String(x.cmd).trim().split(/\s+/)[0].toLowerCase());
-  const total = uniq.size;
-  let ram = 'n/a';
-  try { ram = ramSummary(); } catch {}
-  return {
-    mentionJid,
-    lines: [
-      ['Prefix', prefix],
-      ['User', `@${mentionJid.split('@')[0]}`],
-      ['Time', now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })],
-      ['Day', now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'long' })],
-      ['Date', now.toLocaleDateString('en-GB', { timeZone: tz, day: '2-digit', month: 'long', year: 'numeric' })],
-      ['Version', botVersion()],
-      ['Commands', String(total)],
-      ['Ram', ram],
-      ['Uptime', fmtUptime()],
-      ['Platform', platformName()],
-    ],
-  };
 }
 
 const c = (cmd, ownerOnly = false) => ({ cmd, ownerOnly });
@@ -144,11 +64,11 @@ const REGISTRY = [
     title: 'CORE',
     commands: [
       c('.alive'),
-      c('.ping'),
       c('.cpu', true),
       c('.gpu', true),
       c('.ram', true),
       c('.rom', true),
+      c('.ping'),
       c('.uptime'),
       c('.restart', true),
       c('.help'),
@@ -156,7 +76,7 @@ const REGISTRY = [
       c('.usermanual'),
       c('.prefix', true),
       c('.mode', true),
-      c('.replymode <text|poll>', true),
+      c('.replymode <buttons|text>', true),
       c('.update', true),
       c('.script'),
       c('.repo'),
@@ -189,7 +109,7 @@ const REGISTRY = [
     icon: '📸',
     title: 'INSTAGRAM+',
     commands: [
-      c('.igzip <user>', true), c('.igstory <user>', true),
+      c('.igstory <user>', true),
       c('.igsearch <name>', true), c('.igprofile <user>', true),
       c('.fb <url>'),
     ],
@@ -210,6 +130,13 @@ const REGISTRY = [
       c('.ghost off', true),
       c('.ghost edit on', true),
       c('.ghost edit off', true),
+      c('.ghost relay on|off', true),
+      c('.ghost status on|off', true),
+      c('.ghost mode all|selected', true),
+      c('.ghost chat on|off [number]', true),
+      c('.ghost chats', true),
+      c('.ghost dest <number|here|me>', true),
+      c('.setdest <number>', true),
     ],
   },
   {
@@ -270,7 +197,6 @@ const REGISTRY = [
       c('.unroll <short_url>'),
       c('.speedtest'),
       c('.npm <package>'),
-      c('.web2img <url>'),
       c('.tempmail'),
       c('.readmail <address>'),
       c('.news [topic]'),
@@ -311,19 +237,9 @@ const REGISTRY = [
     icon: '📚',
     title: 'MEDIA, AI & TOOLS',
     commands: [
-      c('.book <query>'),
-      c('.book dl <number>'),
       c('.img <query> [count]'),
-      c('.ocr / .readtext'),
-      c('.barcode [type] [text]'),
       c('.vcard @user'),
-      c('.tts [lang] <text>'),
       c('.sanitize / .exifwipe'),
-      c('.trim <start> <end>'),
-      c('.tomp3'),
-      c('.vn'),
-      c('.compress'),
-      c('.extracompress'),
       c('.whatanime'),
       c('.gemini <prompt>'),
       c('.scholar <topic/question>'),
@@ -332,16 +248,10 @@ const REGISTRY = [
       c('.movie <title>'),
       c('.songinfo <title> [artist]'),
       c('.lyrics <artist> - <title>'),
-      c('.ppt <topic>'),
-      c('.waveform'),
-      c('.8d'),
-      c('.bassboost [1-10]'),
-      c('.robot'),
-      c('.vocal'),
       c('.hd / .enhance'),
       c('.meme "top" | "bottom"'),
       c('.sticker / .s'),
-      c('.toimg / .tovid'),
+      c('.toimg'),
       c('.fancy <text>'),
       c('.dice [spec]'),
       c('.coin [count]'),
@@ -361,7 +271,6 @@ const REGISTRY = [
       c('.video <query/url>'),
       c('.ytdl <url>'),
       c('.pdl <post-url>'),
-      c('.pdlzip <post-url>'),
       c('.download <url>'),
       c('.twitter <url>'),
       c('.pinterest <url>'),
@@ -510,7 +419,8 @@ const REGISTRY = [
       c('.setabout <text>', true),
       c('.setstatus reply|text', true),
       c('.getstatus <number|jid>', true),
-            c('.getpair <number>', true),
+      c('.replymode buttons|txt', true),
+      c('.getpair <number>', true),
       c('.setsession ownernumber', true),
       c('.addsession <number>', true),
       c('.delsession <id>', true),
@@ -545,7 +455,6 @@ const REGISTRY = [
     title: 'CHAT CONTROLS',
     commands: [
       c('.disappearing 24h|7d|90d'),
-      c('.ytcookies', true),
       c('.mute 8h|1d|forever', true),
       c('.unmute', true),
       c('.archive', true),
@@ -591,16 +500,42 @@ function visibleRegistry(isOwnerUser) {
     .filter((g) => g.commands.length > 0);
 }
 
-function renderHeaderBox(prefix, isOwnerUser, info) {
+function totalCommands() {
+  return REGISTRY.reduce((n, g) => n + g.commands.length, 0);
+}
+
+function clockParts() {
+  const tz = CONFIG?.timezone || 'UTC';
+  const now = new Date();
+  const f = (opts) => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz, ...opts }).format(now); } catch { return new Intl.DateTimeFormat('en-GB', opts).format(now); } };
+  return {
+    time: f({ hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+    day: f({ weekday: 'long' }),
+    date: f({ day: '2-digit', month: '2-digit', year: 'numeric' }),
+  };
+}
+
+function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
   const ownerText = isOwnerUser ? toSmallCaps('COMMANDS ARE OWNER-ONLY') : toSmallCaps('COMMANDS ARE PUBLIC');
   const guideCmd = applyPrefix('.ᴄᴏᴍᴍᴀɴᴅ ꜰᴏʀ ɢᴜɪᴅᴇ', prefix);
-  const rows = (info?.lines || [['Prefix', prefix]]).map(([k, v]) => `│ ${k}: ${v}`);
+  const { time, day, date } = clockParts();
+  const who = String(senderJid || '').split('@')[0].split(':')[0] || 'user';
   return [
     '      【 🤖 𝐀𝐥-𝐉𝐢𝐧 🤖 】',
     '┌──────────────────┈⚝',
     `│ ${ownerText}`,
-    ...rows,
     `│ ℹ️ ${guideCmd}`,
+    '│',
+    `│ ${toSmallCaps('Prefix')}: ${prefix}`,
+    `│ ${toSmallCaps('User')}: @${who}`,
+    `│ ${toSmallCaps('Time')}: ${time}`,
+    `│ ${toSmallCaps('Day')}: ${day}`,
+    `│ ${toSmallCaps('Date')}: ${date}`,
+    `│ ${toSmallCaps('Version')}: ${botVersion()}`,
+    `│ ${toSmallCaps('Commands')}: ${totalCommands()}`,
+    `│ ${toSmallCaps('Ram')}: ${ramSummary()}`,
+    `│ ${toSmallCaps('Uptime')}: ${uptimeText()}`,
+    `│ ${toSmallCaps('Platform')}: ${detectPlatform()}`,
     '└──────────────────┈⚝',
   ].join('\n');
 }
@@ -626,8 +561,8 @@ function renderCategoryBox(group, prefix, isOwnerUser) {
   return lines.join('\n');
 }
 
-function renderAllPlainText(prefix, isOwnerUser, info) {
-  const header = renderHeaderBox(prefix, isOwnerUser, info);
+function renderAllPlainText(prefix, isOwnerUser, senderJid = '') {
+  const header = renderHeaderBox(prefix, isOwnerUser, senderJid);
   const groups = visibleRegistry(isOwnerUser);
   const categoryBoxes = [];
 
@@ -657,14 +592,15 @@ export async function helpCommand(sock, chat, msg, args) {
     const from = msg.key.participant || msg.key.remoteJid;
     const isOwnerUser = msg.key.fromMe || isOwner(from);
     const prefix = getPrefix();
+    // who gets the @mention in the menu header
+    const senderJid = msg.key.fromMe ? (sock.user?.id || from) : from;
+    const mentions = [String(senderJid).replace(/:\d+(?=@)/, '')];
 
     const target = (args?.[0] || '').toLowerCase().trim();
 
-    const info = menuInfo(sock, msg, prefix, isOwnerUser);
-
     if (!target) {
-      const text = renderAllPlainText(prefix, isOwnerUser, info);
-      return await sendMenu(sock, chat, text, [info.mentionJid]);
+      const text = renderAllPlainText(prefix, isOwnerUser, senderJid);
+      return await sendMenu(sock, chat, text, msg, mentions);
     }
 
     const group = findGroup(target);
@@ -692,9 +628,9 @@ export async function helpCommand(sock, chat, msg, args) {
       );
     }
 
-    const text = [renderHeaderBox(prefix, isOwnerUser, info), box].join('\n');
+    const text = [renderHeaderBox(prefix, isOwnerUser, senderJid), box].join('\n');
 
-    return await sendMenu(sock, chat, text, [info.mentionJid]);
+    return await sendMenu(sock, chat, text, msg, mentions);
   } catch (e) {
     try {
       await sock.sendMessage(

@@ -52,8 +52,10 @@ export function setSetting(key, value) {
 }
 
 export function getReplyMode() {
-  // Two modes only: "text" (default) or "poll".
-  return load().replyMode === 'poll' ? 'poll' : 'text';
+  // Two modes only: "text" (default, numbered replies) and "poll" (multi-select poll).
+  // An old saved "buttons" value is treated as "text".
+  const m = load().replyMode || process.env.WRAITH_REPLY_MODE;
+  return m === 'poll' ? 'poll' : 'text';
 }
 
 export function setReplyMode(mode) {
