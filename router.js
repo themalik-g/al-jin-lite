@@ -46,6 +46,7 @@ const ramCommand      = lazy('./modules/ping.js', 'ramCommand');
 const romCommand      = lazy('./modules/ping.js', 'romCommand');
 const restartCommand  = lazy('./modules/ping.js', 'restartCommand');
 const helpCommand     = lazy('./modules/help.js', 'helpCommand');
+const imenuCommand    = lazy('./modules/help.js', 'imenuCommand');
 const getppCommand    = lazy('./modules/profile.js', 'getppCommand');
 const getjidCommand   = lazy('./modules/jid.js', 'getjidCommand');
 const updateCommand   = lazy('./modules/update.js', 'updateCommand');
@@ -264,7 +265,7 @@ const CRITICAL_COMMANDS = new Set([
   'setvar', 'getvar', 'delvar',
   'addowner', 'delowner', 'ownerlist',
   'restart', 'pinchat', 'unpinchat', 'pdd',
-  'cpu', 'gpu', 'ram', 'rom',
+  'cpu', 'gpu', 'ram', 'rom', 'imenu',
 ]);
 
 const attachedSockets = new WeakSet();
@@ -482,7 +483,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
         'img', 'image', 'movie', 'lyrics', 'couplepp',
         'welcome', 'goodbye', 'getpp', 'ig', 'tiktok', 'fb',
         'igpost', 'tiktokpost', 'fbpost', 'pdl', 'postdl',
-        'alive', 'uptime', 'restart', 'replymode', 'reqlocation', 'cpu', 'gpu', 'ram', 'rom',
+        'alive', 'uptime', 'restart', 'replymode', 'reqlocation', 'cpu', 'gpu', 'ram', 'rom', 'imenu',
         'twitter', 'tw', 'pinterest', 'pin', 'threads', 'reddit', 'youtube', 'yt',
         'gemini', 'scholar', 'scholor', 'photo', 'imagine', 'imagen', 'pinchat', 'unpinchat', 'disappearing', 'play', 'ytv', 'video', 'ytdl',
         'shorten', 'tinyurl', 'shorturl', 'news', 'hackernews', 'hn', 'wiki', 'wikipedia', 'joke', 'advice', 'fact',
@@ -570,6 +571,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'ping': await pingCommand(csock, chat, msg); break;
           case 'alive': await aliveCommand(csock, chat, msg); break;
           case 'uptime': await uptimeCommand(csock, chat, msg); break;
+          case 'imenu': await imenuCommand(csock, chat, msg, rest); break;
           case 'cpu': await cpuCommand(csock, chat, msg); break;
           case 'gpu': await gpuCommand(csock, chat, msg); break;
           case 'ram': await ramCommand(csock, chat, msg); break;

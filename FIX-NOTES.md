@@ -14,3 +14,9 @@ Keep package-lock.json from the old archive. No new npm packages needed.
 
 Env (optional): AL_JIN_POLL_TTL_MS (poll lifetime, default 60000),
                 WRAITH_FAKE_QUOTE_JID (verified JID used for the menu's status quote).
+
+## Update 2 + 3 (combined)
+CHANGED (replace 5 files): lib/buttons.js  lib/sysinfo.js  modules/help.js  modules/details.js  router.js
+- Forwarded-channel label opens the channel (serverMessageId -1). Optional env AL_JIN_CHANNEL_MSG_ID = id of a real channel post.
+- Menu is always ONE message. New .imenu off (default, text) | on (image + caption) | preview (text + large preview card).
+- Platform parts each on their own "│" line.

@@ -8,35 +8,75 @@ import { newsletterContext, sendWithCta } from '../lib/buttons.js';
 import { X_MENU } from './x-details.js';
 import { CONFIG } from '../config.js';
 import { businessStatusQuote } from '../lib/fakequote.js';
-import { ramSummary, uptimeText, detectPlatform, botVersion } from '../lib/sysinfo.js';
+import { getSetting, setSetting } from '../core/settings.js';
+import { ramSummary, uptimeText, platformParts, botVersion } from '../lib/sysinfo.js';
 
 const MENU_IMAGE = process.env.WRAITH_MENU_IMAGE || 'https://i.picrd.com/images/P6Z69uI7bfC.jpg';
-const CAPTION_MAX = 3000;
 
 // Sends the menu as ONE message. If it fits in an image caption, the banner is
 // attached; otherwise the whole menu goes out as a single text message
 // (never split into two). Falls back to plain text if the image fails.
+// .imenu off     (default) → ONE plain text message
+// .imenu on                → ONE message: banner image, whole menu as its caption
+// .imenu preview           → ONE text message with the banner as a large preview card
+// Never split into two messages. If the image can't be used, the same text goes out alone.
+const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbDSqdOFy72BrpK1I40c';
+
+export function imenuMode() {
+  const v = getSetting('imenu');
+  if (v === 'on' || v === true) return 'on';           // true = value saved by the previous update
+  if (v === 'preview') return 'preview';
+  return 'off';
+}
+
+let _thumb = null;
+async function menuThumb() {
+  if (_thumb) return _thumb;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    const res = await fetch(MENU_IMAGE, { signal: ctl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    _thumb = Buffer.from(await res.arrayBuffer());
+    return _thumb;
+  } catch { return null; }
+}
+
 async function sendMenu(sock, chat, text, msg, mentions = []) {
   // Whole menu is a reply to the blue-tick "WhatsApp Business" status.
   const quoted = businessStatusQuote();
-  const ctx = () => newsletterContext(mentions.length ? { mentionedJid: mentions } : {});
-  if (text.length <= CAPTION_MAX) {
+  const ctx = (extra = {}) => newsletterContext({ ...(mentions.length ? { mentionedJid: mentions } : {}), ...extra });
+  const mode = imenuMode();
+
+  if (mode === 'on') {
     try {
-      return await sock.sendMessage(
-        chat,
-        { image: { url: MENU_IMAGE }, caption: text, mentions, contextInfo: ctx() },
-        { quoted }
-      );
-    } catch (e) {
-      try { console.error('[menu:image]', e?.message); } catch {}
-    }
+      return await sock.sendMessage(chat, { image: { url: MENU_IMAGE }, caption: text, mentions, contextInfo: ctx() }, { quoted });
+    } catch (e) { try { console.error('[menu:image]', e?.message); } catch {} }
   }
-  // Menu longer than a caption (or image failed): banner first, then the full menu text.
-  try {
-    await sock.sendMessage(chat, { image: { url: MENU_IMAGE }, contextInfo: ctx() }, { quoted });
-  } catch (e) {
-    try { console.error('[menu:image]', e?.message); } catch {}
+
+  if (mode === 'preview') {
+    try {
+      const thumbnail = await menuThumb();
+      if (thumbnail) {
+        return await sock.sendMessage(chat, {
+          text, mentions,
+          contextInfo: ctx({
+            externalAdReply: {
+              title: '𝐀𝐥-𝐉𝐢𝐧',
+              body: 'Official Business Account',
+              mediaType: 1,
+              renderLargerThumbnail: true,
+              showAdAttribution: false,
+              thumbnail,
+              sourceUrl: CHANNEL_LINK,
+            },
+          }),
+        }, { quoted });
+      }
+    } catch (e) { try { console.error('[menu:preview]', e?.message); } catch {} }
   }
+
   try {
     return await sock.sendMessage(chat, { text, mentions, contextInfo: ctx() }, { quoted });
   } catch (e) {
@@ -64,6 +104,7 @@ const REGISTRY = [
     title: 'CORE',
     commands: [
       c('.alive'),
+      c('.imenu', true),
       c('.cpu', true),
       c('.gpu', true),
       c('.ram', true),
@@ -515,6 +556,14 @@ function clockParts() {
   };
 }
 
+// First part on the Platform line, every further part on its own line that also starts with the bar.
+function platformLines() {
+  const parts = platformParts();
+  const lines = [`│ ${toSmallCaps('Platform')}: ${parts[0] || 'unknown'}`];
+  for (const extra of parts.slice(1)) lines.push(`│ ${extra}`);
+  return lines;
+}
+
 function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
   const ownerText = isOwnerUser ? toSmallCaps('COMMANDS ARE OWNER-ONLY') : toSmallCaps('COMMANDS ARE PUBLIC');
   const guideCmd = applyPrefix('.ᴄᴏᴍᴍᴀɴᴅ ꜰᴏʀ ɢᴜɪᴅᴇ', prefix);
@@ -535,7 +584,7 @@ function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
     `│ ${toSmallCaps('Commands')}: ${totalCommands()}`,
     `│ ${toSmallCaps('Ram')}: ${ramSummary()}`,
     `│ ${toSmallCaps('Uptime')}: ${uptimeText()}`,
-    `│ ${toSmallCaps('Platform')}: ${detectPlatform()}`,
+    ...platformLines(),
     '└──────────────────┈⚝',
   ].join('\n');
 }
@@ -640,4 +689,24 @@ export async function helpCommand(sock, chat, msg, args) {
       );
     } catch {}
   }
+}
+
+// .imenu [on|off|preview] — owner only
+export async function imenuCommand(sock, chat, msg, args) {
+  const from = msg.key.participant || msg.key.remoteJid;
+  if (!msg.key.fromMe && !isOwner(from)) {
+    return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
+  }
+  const prefix = getPrefix();
+  const arg = String(args?.[0] || '').toLowerCase();
+  const info = {
+    on: 'image embedded in the menu (single message)',
+    preview: 'text menu with the image as a preview card (single message)',
+    off: 'normal text menu, no image',
+  };
+  if (info[arg]) {
+    setSetting('imenu', arg);
+    return sock.sendMessage(chat, { text: `✅ Image menu *${arg.toUpperCase()}* — ${info[arg]}.` }, { quoted: msg });
+  }
+  return sock.sendMessage(chat, { text: `🖼️ Image menu is *${imenuMode().toUpperCase()}*\n\nUsage:\n• \`${prefix}imenu off\` — ${info.off} (default)\n• \`${prefix}imenu on\` — ${info.on}\n• \`${prefix}imenu preview\` — ${info.preview}` }, { quoted: msg });
 }
