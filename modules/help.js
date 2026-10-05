@@ -220,7 +220,7 @@ const REGISTRY = [
     id: 'utility',
     aliases: ['tools'],
     icon: '🛠',
-    title: 'UTILITY & NETWORK',
+    title: 'UTILITY',
     commands: [
       c('.currency'),
       c('.qr <text>'),
