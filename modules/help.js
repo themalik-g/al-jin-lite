@@ -103,7 +103,9 @@ function menuInfo(sock, msg, prefix, isOwnerUser) {
   const now = new Date();
   const jid = msg.key.fromMe ? (sock.user?.id || '') : (msg.key.participant || msg.key.remoteJid || '');
   const mentionJid = String(jid).replace(/:\d+@/, '@');
-  const total = visibleRegistry(isOwnerUser).reduce((n, g) => n + g.commands.length, 0);
+  const uniq = new Set();
+  for (const g of visibleRegistry(isOwnerUser)) for (const x of g.commands) uniq.add(String(x.cmd).trim().split(/\s+/)[0].toLowerCase());
+  const total = uniq.size;
   let ram = 'n/a';
   try { ram = ramSummary(); } catch {}
   return {
@@ -154,7 +156,7 @@ const REGISTRY = [
       c('.usermanual'),
       c('.prefix', true),
       c('.mode', true),
-      c('.replymode <buttons|text|poll>', true),
+      c('.replymode <text|poll>', true),
       c('.update', true),
       c('.script'),
       c('.repo'),
@@ -508,8 +510,7 @@ const REGISTRY = [
       c('.setabout <text>', true),
       c('.setstatus reply|text', true),
       c('.getstatus <number|jid>', true),
-      c('.replymode buttons|txt', true),
-      c('.getpair <number>', true),
+            c('.getpair <number>', true),
       c('.setsession ownernumber', true),
       c('.addsession <number>', true),
       c('.delsession <id>', true),
