@@ -19,6 +19,11 @@ const BASE_COMMAND_DETAILS = {
     description: 'Shows the WhatsApp round-trip time in milliseconds.',
     usage: ['.ping'],
   },
+  imenu: {
+    title: '🖼️ Image Menu Command',
+    description: 'Menu image mode. off (default): text only. on: image embedded with the menu as caption. preview: text menu with the image as a preview card. Always one message.',
+    usage: ['.imenu off', '.imenu on', '.imenu preview'],
+  },
   cpu: {
     title: '🧠 CPU Command',
     description: 'Shows the processor model, available cores and live load.',
