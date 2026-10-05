@@ -63,8 +63,8 @@ async function sendMenu(sock, chat, text, msg, mentions = []) {
           text, mentions,
           contextInfo: ctx({
             externalAdReply: {
-              title: '𝐀𝐥-𝐉𝐢𝐧',
-              body: 'Official Business Account',
+              title: '𝗔𝗟-𝗝𝗜𝗡',
+              body: 'Al-Jin Official Channel',
               mediaType: 1,
               renderLargerThumbnail: true,
               showAdAttribution: false,
@@ -515,7 +515,8 @@ const REGISTRY = [
       c('.presence', true),
       c('.presence online on|off', true),
       c('.presence typing on|off', true),
-      c('.presence recording on|off', true),
+      c('.presence recording on', true),
+      c('.presence recording off', true),
       c('.presence reads on|off', true),
       c('.activity', true),
     ],
