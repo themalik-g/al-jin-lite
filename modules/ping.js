@@ -9,9 +9,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { isOwner } from '../core/identity.js';
-import { sendWithCta } from '../lib/buttons.js';
+import { execFile } from 'node:child_process';
+import { sendWithCta, newsletterContext } from '../lib/buttons.js';
 
-const BOOT_TIME = Date.now();
+const NEWSLETTER_CONTEXT_FN = newsletterContext;
+
+const BOOT_TIME = Date.now() - process.uptime() * 1000;   // real process start, not first-use
 
 // ─────────────────────────────────────────────
 //  cgroup detection
@@ -185,7 +188,12 @@ function memQuality(pct) {
     return '🔴critical';
 }
 
-function uptime() {
+export function ramSummary() {
+    const m = containerMemory();
+    return `${mb(m.used)} MB / ${mb(m.limit)} MB`;
+}
+
+export function uptime() {
     const s   = Math.floor((Date.now() - BOOT_TIME) / 1000);
     const d   = Math.floor(s / 86400);
     const h   = Math.floor((s % 86400) / 3600);
@@ -205,81 +213,146 @@ function mb(bytes) {
 }
 
 // ─────────────────────────────────────────────
-//  .ping
+//  helpers shared by .cpu .gpu .ram .rom
+// ─────────────────────────────────────────────
+function ownerGuard(sock, chat, msg) {
+    const from = msg.key.participant || msg.key.remoteJid;
+    if (!msg.key.fromMe && !isOwner(from)) {
+        sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg }).catch(() => {});
+        return true;
+    }
+    return false;
+}
+
+function gb(bytes) {
+    return (bytes / 1024 / 1024 / 1024).toFixed(2);
+}
+
+function runCmd(cmd, args, timeout = 2500) {
+    return new Promise((resolve) => {
+        try {
+            execFile(cmd, args, { timeout, windowsHide: true }, (err, stdout) => {
+                resolve(err ? null : String(stdout || '').trim());
+            });
+        } catch { resolve(null); }
+    });
+}
+
+// ─────────────────────────────────────────────
+//  .ping  → milliseconds only
 // ─────────────────────────────────────────────
 export async function pingCommand(sock, chat, msg) {
-    const from = msg.key.participant || msg.key.remoteJid;
-
-    if (!msg.key.fromMe && !isOwner(from)) {
-        return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-    }
-
-    // ── 1. WhatsApp round-trip ──
     const t0 = Date.now();
-    const sent = await sock.sendMessage(chat, {
-        text: '🏓 _probing…_'
-    }, { quoted: msg });
-    const rtt = Date.now() - t0;
+    const sent = await sock.sendMessage(chat, { text: '🏓' }, { quoted: msg });
+    const ms = Date.now() - t0;
+    const text = `🏓 *${ms} ms*`;
+    if (sent?.key) {
+        await sock.sendMessage(chat, { text, edit: sent.key, contextInfo: NEWSLETTER_CONTEXT_FN() })
+            .catch(() => sock.sendMessage(chat, { text }, { quoted: msg }));
+    } else {
+        await sock.sendMessage(chat, { text }, { quoted: msg });
+    }
+}
 
-    // ── 2. Event-loop lag ──
-    const lagStart = Date.now();
-    await new Promise((r) => setImmediate(r));
-    const eventLoopLag = Date.now() - lagStart;
-
-    // ── 3. Container CPU sample ──
-    const cpu = await sampleContainerCpu(300);
-
-    // ── 4. Container memory ──
-    const mem = containerMemory();
-    const memPct = (mem.used / mem.limit) * 100;
-
-    // ── 5. Process memory ──
-    const proc = process.memoryUsage();
-
-    // ── 6. Build compact message ──
-    const lines = [
-        `🏓 *pong*`,
-        ``,
-        `*whatsapp rtt* · ${rtt} ms`,
-        `\`${rttBar(rtt)}\` ${rttQuality(rtt)}`,
-        ``,
-        `*event loop* · ${eventLoopLag} ms`,
-        ``,
-    ];
-
-    // CPU line — quota only, no host noise
-    if (cpu) {
-        const quota = Number.isInteger(cpu.cores)
-            ? cpu.cores
-            : cpu.cores.toFixed(2);
+// ─────────────────────────────────────────────
+//  .cpu
+// ─────────────────────────────────────────────
+export async function cpuCommand(sock, chat, msg) {
+    if (ownerGuard(sock, chat, msg)) return;
+    const cpus = os.cpus() || [];
+    const model = (cpus[0]?.model || 'unknown').replace(/\s+/g, ' ').trim();
+    const sample = await sampleContainerCpu(300);
+    const load = os.loadavg().map((n) => n.toFixed(2)).join(' · ');
+    const lines = [`🧠 *CPU*`, ``, `*model* · ${model}`];
+    if (sample) {
+        const quota = Number.isInteger(sample.cores) ? sample.cores : sample.cores.toFixed(2);
         lines.push(
-            `*cpu* · ${quota} core${cpu.cores !== 1 ? 's' : ''}`,
-            `\`${bar(cpu.pct)}\` ${cpu.pct.toFixed(1)}% ${cpuQuality(cpu.pct)}`
+            `*cores* · ${cpus.length} host / ${quota} quota`,
+            `*usage* · ${sample.pct.toFixed(1)}% ${cpuQuality(sample.pct)}`,
+            `\`${bar(sample.pct)}\``
         );
     } else {
-        const cores = os.cpus()?.length || 1;
-        lines.push(`*cpu* · ${cores} cores _(host)_`);
+        lines.push(`*cores* · ${cpus.length}`);
     }
+    if (cpus[0]?.speed) lines.push(`*speed* · ${cpus[0].speed} MHz`);
+    lines.push(`*load avg* · ${load}`);
+    await sock.sendMessage(chat, { text: lines.join('\n') }, { quoted: msg });
+}
 
-    // Memory line
-    lines.push(
+// ─────────────────────────────────────────────
+//  .gpu
+// ─────────────────────────────────────────────
+export async function gpuCommand(sock, chat, msg) {
+    if (ownerGuard(sock, chat, msg)) return;
+    let text = null;
+    const nv = await runCmd('nvidia-smi', [
+        '--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu',
+        '--format=csv,noheader,nounits',
+    ]);
+    if (nv) {
+        const rows = nv.split('\n').map((l) => l.split(',').map((x) => x.trim()));
+        text = ['🎮 *GPU*', ''].concat(rows.map((r, i) =>
+            `*#${i}* · ${r[0]}\n• usage · ${r[1]}%\n• vram · ${r[2]} / ${r[3]} MB\n• temp · ${r[4]}°C`
+        )).join('\n');
+    } else {
+        const pci = await runCmd('sh', ['-c', "lspci 2>/dev/null | grep -iE 'vga|3d|display'"]);
+        if (pci) {
+            const names = pci.split('\n').map((l) => l.replace(/^[^:]+:\d+\.\d+\s+[^:]+:\s*/, '').trim());
+            text = ['🎮 *GPU*', ''].concat(names.map((n, i) => `*#${i}* · ${n}`)).join('\n');
+        }
+    }
+    await sock.sendMessage(chat, { text: text || '🎮 *GPU*\n\nNo GPU detected on this server.' }, { quoted: msg });
+}
+
+// ─────────────────────────────────────────────
+//  .ram
+// ─────────────────────────────────────────────
+export async function ramCommand(sock, chat, msg) {
+    if (ownerGuard(sock, chat, msg)) return;
+    const mem = containerMemory();
+    const pct = (mem.used / mem.limit) * 100;
+    const proc = process.memoryUsage();
+    const text = [
+        `💾 *RAM*`,
         ``,
-        `*memory*`,
-        `\`${bar(memPct)}\`  ${memPct.toFixed(1)}%  ${memQuality(memPct)}`,
-        `• container · ${mb(mem.used)} / ${mb(mem.limit)} MB`,
-        `• process rss · ${mb(proc.rss)} MB`,
-        `• heap used · ${mb(proc.heapUsed)} / ${mb(proc.heapTotal)} MB`,
-        ``,
-        `*uptime* · ${uptime()}`
-    );
+        `\`${bar(pct)}\` ${pct.toFixed(1)}% ${memQuality(pct)}`,
+        `*used* · ${mb(mem.used)} / ${mb(mem.limit)} MB`,
+        `*host total* · ${gb(os.totalmem())} GB`,
+        `*host free* · ${gb(os.freemem())} GB`,
+        `*process rss* · ${mb(proc.rss)} MB`,
+        `*heap* · ${mb(proc.heapUsed)} / ${mb(proc.heapTotal)} MB`,
+    ].join('\n');
+    await sock.sendMessage(chat, { text }, { quoted: msg });
+}
 
-    const body = lines.join('\n');
-
+// ─────────────────────────────────────────────
+//  .rom  (disk storage)
+// ─────────────────────────────────────────────
+export async function romCommand(sock, chat, msg) {
+    if (ownerGuard(sock, chat, msg)) return;
+    let text;
     try {
-        await sendWithCta(sock, chat, body, { quoted: msg });
+        const st = fs.statfsSync(process.cwd());
+        const total = st.blocks * st.bsize;
+        const free = st.bavail * st.bsize;
+        const used = total - free;
+        const pct = total ? (used / total) * 100 : 0;
+        text = [
+            `📀 *ROM / Storage*`,
+            ``,
+            `\`${bar(pct)}\` ${pct.toFixed(1)}%`,
+            `*used* · ${gb(used)} GB`,
+            `*free* · ${gb(free)} GB`,
+            `*total* · ${gb(total)} GB`,
+        ].join('\n');
     } catch {
-        await sock.sendMessage(chat, { text: body });
+        const df = await runCmd('df', ['-kP', process.cwd()]);
+        const row = df?.split('\n')[1]?.split(/\s+/);
+        text = row
+            ? `📀 *ROM / Storage*\n\n*used* · ${gb(row[2] * 1024)} GB\n*free* · ${gb(row[3] * 1024)} GB\n*total* · ${gb(row[1] * 1024)} GB (${row[4]})`
+            : '📀 *ROM / Storage*\n\nCould not read disk info on this platform.';
     }
+    await sock.sendMessage(chat, { text }, { quoted: msg });
 }
 
 // ─────────────────────────────────────────────
