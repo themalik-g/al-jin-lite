@@ -117,7 +117,7 @@ const REGISTRY = [
       c('.usermanual'),
       c('.prefix', true),
       c('.mode', true),
-      c('.replymode <buttons|text>', true),
+      c('.replymode', true),
       c('.update', true),
       c('.script'),
       c('.repo'),
@@ -167,16 +167,14 @@ const REGISTRY = [
     title: 'GHOST',
     commands: [
       c('.ghost', true),
-      c('.ghost on', true),
-      c('.ghost off', true),
-      c('.ghost edit on', true),
-      c('.ghost edit off', true),
+      c('.ghost on|off', true),
+      c('.ghost edit on|off', true),
       c('.ghost relay on|off', true),
       c('.ghost status on|off', true),
       c('.ghost mode all|selected', true),
-      c('.ghost chat on|off [number]', true),
+      c('.ghost chat on|off', true),
       c('.ghost chats', true),
-      c('.ghost dest <number|here|me>', true),
+      c('.ghost dest <number>', true),
       c('.setdest <number>', true),
     ],
   },
@@ -213,7 +211,6 @@ const REGISTRY = [
     title: 'SCHEDULE',
     commands: [
       c('.schedule', true),
-      c('.schedule txt date am|pm', true),
       c('.schedule list', true),
       c('.schedule cancel <id>', true),
       c('.schedule media', true),
@@ -284,7 +281,7 @@ const REGISTRY = [
       c('.whatanime'),
       c('.gemini <prompt>'),
       c('.scholar <topic/question>'),
-      c('.photo / .imagine / .imagen <prompt>'),
+      c('.photo <prompt>'),
       c('.couplepp [count]'),
       c('.movie <title>'),
       c('.songinfo <title> [artist]'),
@@ -340,7 +337,7 @@ const REGISTRY = [
     icon: '🪄',
     title: 'TEXT→PHOTO',
     commands: [
-      c('.textmaker <effect> <text>'),
+      c('.textmaker effect txt'),
       c('.neon <text>'),
       c('.glitch <text>'),
       c('.3dgold <text>'),
@@ -408,8 +405,8 @@ const REGISTRY = [
     commands: [
       c('.open', true),
       c('.close', true),
-      c('.schedule open date time', true),
-      c('.schedule close date time', true),
+      c('.schedule open', true),
+      c('.schedule close', true),
       c('.kick (reply|num)', true),
       c('.add <number>', true),
       c('.promote (reply|num)', true),
@@ -440,7 +437,7 @@ const REGISTRY = [
       c('.gclone', true),
       c('.revoke', true),
       c('.gshield on|off', true),
-      c('.fakereply @user text|reply'),
+      c('.fakereply txt|reply'),
       c('.antipromote on|off', true),
       c('.antidemote on|off', true),
       c('.purge [count]', true),
@@ -462,7 +459,7 @@ const REGISTRY = [
       c('.getstatus <number|jid>', true),
       c('.replymode buttons|txt', true),
       c('.getpair <number>', true),
-      c('.setsession ownernumber', true),
+      c('.setsession <number>', true),
       c('.addsession <number>', true),
       c('.delsession <id>', true),
       c('.setvar <key> <value>', true),
@@ -485,7 +482,9 @@ const REGISTRY = [
       c('.addowner <number>', true),
       c('.delowner <number>', true),
       c('.owner list', true),
-      c('.privacy lastseen|pfp|groupadd', true),
+      c('.privacy lastseen', true),
+      c('.privacy groupadd', true),
+      c('.privacy pfp', true),
       c('.stealfull @user', true),
     ],
   },
@@ -571,7 +570,7 @@ function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
   const who = String(senderJid || '').split('@')[0].split(':')[0] || 'user';
   return [
     '      【 🤖 𝐀𝐥-𝐉𝐢𝐧 🤖 】',
-    '┌──────────────────┈⚝',
+    '┌─────────────────┈⚝',
     `│ ${ownerText}`,
     `│ ℹ️ ${guideCmd}`,
     '│',
@@ -585,7 +584,7 @@ function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
     `│ ${toSmallCaps('Ram')}: ${ramSummary()}`,
     `│ ${toSmallCaps('Uptime')}: ${uptimeText()}`,
     ...platformLines(),
-    '└──────────────────┈⚝',
+    '└─────────────────┈⚝',
   ].join('\n');
 }
 
@@ -598,14 +597,14 @@ function renderCategoryBox(group, prefix, isOwnerUser) {
 
   const lines = [
     `      _*【 ${group.icon} ${toSmallCaps(group.title)} 】*_`,
-    '┌──────────────────┈⚝',
+    '┌─────────────────┈⚝',
   ];
 
   for (const item of visible) {
     lines.push(`│ ◈ ${applyPrefix(item.cmd, prefix)}`);
   }
 
-  lines.push('└──────────────────┈⚝');
+  lines.push('└─────────────────┈⚝');
 
   return lines.join('\n');
 }
