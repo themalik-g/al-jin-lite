@@ -16,8 +16,28 @@ const BASE_COMMAND_DETAILS = {
   },
   ping: {
     title: '⚡ Ping Command',
-    description: 'Measures bot response latency and server execution speed.',
+    description: 'Shows the WhatsApp round-trip time in milliseconds.',
     usage: ['.ping'],
+  },
+  cpu: {
+    title: '🧠 CPU Command',
+    description: 'Shows the processor model, available cores and live load.',
+    usage: ['.cpu'],
+  },
+  gpu: {
+    title: '🎮 GPU Command',
+    description: 'Shows the graphics card(s) of the server, if any.',
+    usage: ['.gpu'],
+  },
+  ram: {
+    title: '💾 RAM Command',
+    description: 'Shows memory used / total (container-aware) and bot process memory.',
+    usage: ['.ram'],
+  },
+  rom: {
+    title: '🗄️ ROM Command',
+    description: 'Shows storage used / free and the size of the bot files.',
+    usage: ['.rom'],
   },
   uptime: {
     title: '⏱️ Uptime Command',
@@ -51,7 +71,7 @@ const BASE_COMMAND_DETAILS = {
   },
   replymode: {
     title: '💬 Reply Mode Command',
-    description: 'Switches how choices are shown: numbered plain text, or a native multi-select WhatsApp poll.',
+    description: 'Switches the reply interface: plain text with numbered replies, or a multi-select poll (every newly ticked option runs, the poll stays open until its time is up).',
     usage: ['.replymode text', '.replymode poll'],
   },
   update: {

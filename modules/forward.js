@@ -13,6 +13,9 @@ import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { resolveTargetUniversal, getBestUserJid } from '../core/jid-resolver.js';
 import { sendWithCta } from '../lib/buttons.js';
 
+// Content sent to the recipient is the user's own — no "forwarded from channel" stamp.
+const NOCTX = { channelCtx: false };
+
 const MEDIA_KINDS = {
   imageMessage:    'image',
   videoMessage:    'video',
@@ -91,24 +94,24 @@ async function resendFromMemory(sock, target, qm, customText) {
     if (!node) continue;
     const buf = await toBuffer(await downloadContentFromMessage(node, kind));
     const caption = customText || node.caption || undefined;
-    if (kind === 'image')   return sock.sendMessage(target, { image: buf, caption });
-    if (kind === 'video')   return sock.sendMessage(target, { video: buf, caption, gifPlayback: !!node.gifPlayback });
-    if (kind === 'sticker') return sock.sendMessage(target, { sticker: buf });
+    if (kind === 'image')   return sock.sendMessage(target, { image: buf, caption }, NOCTX);
+    if (kind === 'video')   return sock.sendMessage(target, { video: buf, caption, gifPlayback: !!node.gifPlayback }, NOCTX);
+    if (kind === 'sticker') return sock.sendMessage(target, { sticker: buf }, NOCTX);
     if (kind === 'audio') {
-      if (customText) await sock.sendMessage(target, { text: customText });
-      return sock.sendMessage(target, { audio: buf, mimetype: node.mimetype || 'audio/mpeg', ptt: !!node.ptt });
+      if (customText) await sock.sendMessage(target, { text: customText }, NOCTX);
+      return sock.sendMessage(target, { audio: buf, mimetype: node.mimetype || 'audio/mpeg', ptt: !!node.ptt }, NOCTX);
     }
     return sock.sendMessage(target, {
       document: buf,
       mimetype: node.mimetype || 'application/octet-stream',
       fileName: node.fileName || 'file',
       caption,
-    });
+    }, NOCTX);
   }
 
   const text = customText || content.conversation || content.extendedTextMessage?.text || '';
   if (!text) throw new Error('This message type cannot be forwarded.');
-  return sock.sendMessage(target, { text });
+  return sock.sendMessage(target, { text }, NOCTX);
 }
 
 export async function forwardCommand(sock, chat, msg, args) {
@@ -145,7 +148,7 @@ export async function forwardCommand(sock, chat, msg, args) {
   try {
     if (!quotedMessage) {
       if (!customText) throw new Error('Reply to a message, or give some text to send.');
-      await sock.sendMessage(target, { text: customText });
+      await sock.sendMessage(target, { text: customText }, NOCTX);
     } else if (customText) {
       // custom text overrides the caption / text, so re-send with it
       await resendFromMemory(sock, target, quotedMessage, customText);
