@@ -23,7 +23,7 @@ const GROUP_TOOLS = [
     ['left', '🚪 Recently Left', 'Shows who left or was removed recently.', ['.left [count]']],
     ['msgs', '💬 Message Count', 'Messages counted per member, or the top chatters.', ['.msgs [@user]', '.msgs top']],
     ['common', '👥 Common Members', 'Members this group shares with another group the bot is in.', ['.common', '.common <number>'], true],
-    ['poll', '📊 Create Poll', 'Sends a native WhatsApp poll.', ['.poll Question | A | B | C [--multi]']],
+    ['poll', '📊 Create Poll', 'Sends a native WhatsApp poll.', ['.poll Question|A|B|C']],
     ['vote', '🗳️ Quick Vote', 'Yes/no vote inside the chat.', ['.vote <question>', '.vote yes|no', '.vote end']],
     ['afk', '💤 Away Status', 'Tells people who tag you that you are away.', ['.afk [reason]']],
 ];
@@ -32,7 +32,7 @@ const BOT = [
     ['unban', '✅ Unban', 'Lets a banned user use commands again.', ['.unban @user'], true],
     ['banlist', '📋 Ban List', 'Lists banned numbers.', ['.banlist'], true],
     ['pmblocker', '🔒 PM Blocker', 'Notice or block strangers who message the bot privately.', ['.pmblocker warn|off', '.pmblocker block confirm', '.pmblocker allow|disallow @user', '.pmblocker msg <text>'], true],
-    ['setcmd', '🔗 Command Alias', 'Create your own short name for any command.', ['.setcmd <alias> <command [args]>'], true],
+    ['setcmd', '🔗 Command Alias', 'Create your own short name for any command.', ['.setcmd <alias> <cmd>'], true],
     ['delcmd', '🗑️ Delete Alias', 'Removes an alias.', ['.delcmd <alias>'], true],
     ['cmds', '📃 Alias List', 'Shows your aliases.', ['.cmds'], true],
     ['cleartmp', '🧹 Clear Temp Files', 'Deletes leftover temporary files.', ['.cleartmp'], true],
@@ -69,7 +69,7 @@ const TOOLS = [
     ['base64', '🔤 Base64', 'Encode or decode text.', ['.base64 enc <text>', '.base64 dec <code>']],
     ['hash', '#️⃣ Hash', 'md5, sha1, sha256, sha384, sha512.', ['.hash [algo] <text>']],
     ['morse', '📟 Morse Code', 'Text ⇄ Morse.', ['.morse <text or morse>']],
-    ['password', '🔐 Password', 'Strong random password, generated locally.', ['.password [length] [simple]']],
+    ['password', '🔐 Password', 'Strong random password, generated locally.', ['.password length']],
     ['uuid', '🆔 UUID', 'Random UUID v4.', ['.uuid [count]']],
     ['age', '🎂 Age', 'Exact age and days to next birthday.', ['.age 2001-04-23']],
     ['bmi', '⚖️ BMI', 'Body-mass index from weight and height.', ['.bmi 70 175', '.bmi 154lb 5\'9']],
@@ -78,7 +78,7 @@ const TOOLS = [
     ['task', '📝 To-Do', 'Private task list. Alias: todo.', ['.task add <text>', '.task done|undo|del <n>', '.task clear']],
 ];
 const WEB = [
-    ['translate', '🌐 Translate', 'Translate text or a replied message. Alias: trt.', ['.translate fr good morning', '.translate ur (reply)']],
+    ['translate', '🌐 Translate', 'Translate text or a replied message. Alias: trt.', ['.translate lang txt', '.translate ur (reply)']],
     ['trivia', '🧠 Trivia', 'Random multiple-choice question.', ['.trivia', '.trivia a|b|c|d']],
     ['quote', '💭 Quote', 'Random quote.', ['.quote']],
     ['whois', '🔎 WHOIS / RDAP', 'Registration info for a domain or IP.', ['.whois example.com', '.whois 8.8.8.8']],
@@ -105,7 +105,7 @@ const MEDIA = [
 ];
 
 const SECTIONS = [
-    { id: 'xprotect', icon: '🛡️', title: 'GROUP PROTECTION+', rows: GROUP_PROTECT, adminHint: true },
+    { id: 'xprotect', icon: '🛡️', title: 'G.PROTECTION+', rows: GROUP_PROTECT, adminHint: true },
     { id: 'xgroup', icon: '👥', title: 'GROUP TOOLS+', rows: GROUP_TOOLS },
     { id: 'xbot', icon: '⚙️', title: 'BOT CONTROL+', rows: BOT },
     { id: 'xfun', icon: '🎲', title: 'FUN & GAMES', rows: FUN },
