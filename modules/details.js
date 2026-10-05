@@ -51,8 +51,8 @@ const BASE_COMMAND_DETAILS = {
   },
   replymode: {
     title: '💬 Reply Mode Command',
-    description: 'Switches bot reply interface between interactive buttons and formatted plain text.',
-    usage: ['.replymode buttons', '.replymode text'],
+    description: 'Switches how choices are shown: numbered plain text, or a native multi-select WhatsApp poll.',
+    usage: ['.replymode text', '.replymode poll'],
   },
   update: {
     title: '🆙 Update Command',

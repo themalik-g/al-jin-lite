@@ -803,12 +803,12 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'replymode': {
             if (!senderIsOwner) { await sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg }); break; }
             const modeArg = (rest[0] || '').toLowerCase();
-            if (modeArg === 'text' || modeArg === 'buttons' || modeArg === 'poll') {
+            if (modeArg === 'text' || modeArg === 'poll') {
               setReplyMode(modeArg);
               await sock.sendMessage(chat, { text: `✅ Reply mode set to *${modeArg}*` }, { quoted: msg });
             } else {
               const cur = getReplyMode();
-              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode buttons\`\n• \`${prefix}replymode text\`\n• \`${prefix}replymode poll\`` }, { quoted: msg });
+              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode text\`\n• \`${prefix}replymode poll\`` }, { quoted: msg });
             }
             break;
           }
