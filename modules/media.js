@@ -1,20 +1,181 @@
 // ─────────────────────────────────────────────
 // Al-Jin · modules/media.js
-// Image search + movie + song info + lyrics + couplepp + meme
+// Books + image search + movie + song info + lyrics + couplepp
 // ─────────────────────────────────────────────
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
+  searchBooks,
   searchImages,
   searchMovie,
   searchSong,
   fetchLyrics,
 } from '../lib/apis.js';
-import { chunkText } from '../lib/net.js';
-import { sendInteractive, createQuickReply, NEWSLETTER_CONTEXT, sendWithCta } from '../lib/buttons.js';
+import { chunkText, downloadToFile } from '../lib/net.js';
+import { sendInteractive, createQuickReply, newsletterContext, sendWithCta } from '../lib/buttons.js';
 import { getPrefix } from '../core/settings.js';
+
+// ─── Book cache ───
+const bookCache = new Map();
+const BOOK_CACHE_TTL = 10 * 60 * 1000;
+
+function getCachedBooks(chat) {
+  const e = bookCache.get(chat);
+  if (e && Date.now() - e.time < BOOK_CACHE_TTL) return e;
+  return null;
+}
 
 async function sendChunked(sock, chat, msg, text) {
   for (const p of chunkText(text, 3800)) {
     await sock.sendMessage(chat, { text: p }, { quoted: msg });
+  }
+}
+
+// ─────────────────────────────────────────────
+// .book
+// ─────────────────────────────────────────────
+export async function bookCommand(sock, chat, msg, args) {
+  try {
+    const a0 = (args?.[0] || '').toLowerCase();
+
+    // ── .book dl <n> ──
+    if (a0 === 'dl' && args[1]) {
+      const cached = getCachedBooks(chat);
+      let book = null;
+      const n = parseInt(args[1], 10);
+
+      if (cached && !isNaN(n) && cached.books[n - 1]) {
+        book = cached.books[n - 1];
+      } else {
+        const r = await searchBooks(args[1], 1);
+        if (r.ok && r.books[0]) book = r.books[0];
+      }
+
+      if (!book) {
+        return sock.sendMessage(chat, {
+          text: '❌ Book not found. Run `.book <title>` first, then `.book dl <number>`.'
+        }, { quoted: msg });
+      }
+
+      if (!book.url) {
+        return sock.sendMessage(chat, {
+          text: `📖 *${book.title}*\n_by ${book.author}_\n\n⚠️ No direct PDF download available for this item (lending restricted).\n\n_Read online:_ ${book.webUrl || 'not available'}`
+        }, { quoted: msg });
+      }
+
+      await sock.sendMessage(chat, {
+        text: `📚 Downloading *${book.title}* (${(book.format || 'pdf').toUpperCase()})…`
+      }, { quoted: msg });
+
+      const ext = book.format === 'epub' ? '.epub'
+                : book.format === 'pdf' ? '.pdf'
+                : '.txt';
+      const safeName = (book.title || 'book')
+        .replace(/[^\w\s-]/g, '').trim().slice(0, 60) || 'book';
+
+      const tmpBookDir = path.resolve(process.env.WRAITH_DATA_DIR || process.cwd(), 'data', 'tmp');
+      fs.mkdirSync(tmpBookDir, { recursive: true });
+      const dest = path.join(tmpBookDir, `wraith-book-${Date.now()}${ext}`);
+
+      try {
+        await downloadToFile(
+          book.url,
+          dest,
+          100 * 1024 * 1024,
+          5,
+          book.url.includes('archive.org') ? { Referer: 'https://archive.org/' } : {}
+        );
+
+        const buf = fs.readFileSync(dest);
+        const mimetype =
+          ext === '.pdf' ? 'application/pdf'
+          : ext === '.epub' ? 'application/epub+zip'
+          : 'text/plain';
+
+        await sock.sendMessage(chat, {
+          document: buf,
+          fileName: `${safeName}${ext}`,
+          mimetype,
+          caption: `📚 *${book.title}*\n_by ${book.author}_${book.year ? ` · ${book.year}` : ''}`
+        }, { quoted: msg });
+      } catch (e) {
+        await sock.sendMessage(chat, {
+          text: `❌ Direct file delivery failed: ${e.message}\n\n🔗 *Direct Download Link:*\n${book.url}\n\n📖 *Read Online Link:*\n${book.webUrl || 'N/A'}`
+        }, { quoted: msg });
+      } finally {
+        try { if (fs.existsSync(dest)) fs.unlinkSync(dest); } catch {}
+      }
+      return;
+    }
+
+    // ── .book <query> ──
+    const query = (args || []).join(' ').trim();
+    if (!query) {
+      return sendWithCta(chat ? sock : sock, chat, '📚 *book*\n\n`.book <title>` — search\n`.book dl <number>` — download from last results', { quoted: msg });
+    }
+
+    const r = await searchBooks(query, 8);
+    if (!r.ok || !r.books.length) {
+      return sock.sendMessage(chat, {
+        text: `❌ No books found for *${query}*.`
+      }, { quoted: msg });
+    }
+
+    bookCache.set(chat, { time: Date.now(), query, books: r.books });
+    if (bookCache.size > 10) {
+      bookCache.delete(bookCache.keys().next().value);
+    }
+
+    const lines = [`📚 *Books* — "${query}"`, ''];
+    r.books.forEach((b, i) => {
+      const typeLabel = b.url ? `📥 DL (${(b.format || 'pdf').toUpperCase()})` : '📖 READ ONLINE ONLY';
+      lines.push(`*${i + 1}.* ${b.title}`);
+      lines.push(`   _${b.author}_${b.year ? ` · ${b.year}` : ''} · ${typeLabel}`);
+      if (b.url) {
+        lines.push(`   ✅ \`.book dl ${i + 1}\``);
+      } else {
+        lines.push(`   🔗 ${b.webUrl}`);
+      }
+    });
+
+    const p = getPrefix();
+    const downloadables = r.books
+      .map((b, i) => ({ book: b, idx: i + 1 }))
+      .filter((x) => Boolean(x.book.url))
+      .slice(0, 3);
+
+    const buttons = downloadables.map((x) =>
+      createQuickReply(`📥 DL ${x.idx}`, `${p}book dl ${x.idx}`)
+    );
+
+    lines.push('');
+    lines.push('_💡 Reply directly to this message with a number (e.g. 1 or dl 1) or click a button above to download._');
+
+    if (buttons.length > 0) {
+      await sendInteractive(
+        sock,
+        chat,
+        {
+          body: lines.join('\n'),
+          footer: `Source: ${r.source} · Provided by 𝐀𝐥-𝐉𝐢𝐧`,
+          buttons,
+        },
+        { quoted: msg }
+      );
+    } else {
+      await sock.sendMessage(
+        chat,
+        {
+          text: lines.join('\n'),
+          contextInfo: newsletterContext(),
+        },
+        { quoted: msg }
+      );
+    }
+
+  } catch (e) {
+    await sock.sendMessage(chat, { text: `⚠️ book failed: ${e.message}` }, { quoted: msg }).catch(() => {});
   }
 }
 
@@ -250,7 +411,7 @@ export async function memeCommand(sock, chat, msg, args) {
     }
 
     // Get media from quoted message or direct message
-    const { getMediaFromMsg } = await import('../lib/getmedia.js');
+    const { getMediaFromMsg } = await import('./media-tools.js');
     const media = await getMediaFromMsg(msg);
 
     if (!media || media.kind !== 'image') {

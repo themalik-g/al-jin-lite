@@ -60,6 +60,6 @@ export function getReplyMode() {
 
 export function setReplyMode(mode) {
   const s = load();
-  s.replyMode = ['text', 'poll', 'buttons'].includes(mode) ? mode : 'text';
+  s.replyMode = ['text', 'poll'].includes(mode) ? mode : 'buttons';
   persist();
 }
