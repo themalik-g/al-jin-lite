@@ -1,79 +1,134 @@
 // ─────────────────────────────────────────────
 // Al-Jin · modules/forward.js
-// .forward <custom text / JID> — Forwards text, quoted media, or quoted message to specified recipient JID/LID/phone
+// .forward <custom text / JID / Phone / Mention> — Forwards text, quoted media, or quoted message to specified recipient
 // ─────────────────────────────────────────────
-import { resolveJid, getBestUserJid } from '../core/jid-resolver.js';
+import { resolveBoth, resolveTargetUniversal, getBestUserJid } from '../core/jid-resolver.js';
 import { sendWithCta } from '../lib/buttons.js';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 
-function extractQuotedMessageNode(msg) {
-  const ctx = msg.message?.extendedTextMessage?.contextInfo;
+function getQuotedInfo(msg) {
+  const ctx = msg.message?.extendedTextMessage?.contextInfo ||
+              msg.message?.imageMessage?.contextInfo ||
+              msg.message?.videoMessage?.contextInfo ||
+              msg.message?.documentMessage?.contextInfo ||
+              msg.message?.audioMessage?.contextInfo ||
+              msg.message?.stickerMessage?.contextInfo;
   if (!ctx?.quotedMessage) return null;
-  return ctx.quotedMessage;
+  return {
+    quotedMessage: ctx.quotedMessage,
+    participant: ctx.participant,
+    stanzaId: ctx.stanzaId,
+    contextInfo: ctx
+  };
 }
 
 export async function forwardCommand(sock, chat, msg, args) {
   const fullArgs = (args || []).join(' ').trim();
+  const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+  const quotedInfo = getQuotedInfo(msg);
 
-  if (!fullArgs) {
-    return sendWithCta(sock, chat, `⏩ *Forward Command*\n\nUsage:\n• \`.forward <JID or Phone>\` (while quoting a message)\n• \`.forward <custom text> <JID or Phone>\`\n\nExamples:\n• \`.forward 923257853673\`\n• \`.forward Hello 923257853673@s.whatsapp.net\``, { quoted: msg });
+  if (!fullArgs && !mentions.length) {
+    return sendWithCta(
+      sock,
+      chat,
+      `⏩ *Forward Command*\n\nUsage:\n• Reply to a message and type: \`.forward <JID / Phone / @mention>\`\n• \`.forward <custom text> <JID / Phone / @mention>\`\n\nExamples:\n• \`.forward 923257853673\`\n• \`.forward Hello 923257853673@s.whatsapp.net\``,
+      { quoted: msg }
+    );
   }
 
-  // Parse arguments: target JID/Phone is usually the last token
-  const tokens = fullArgs.split(/\s+/);
-  let targetRaw = tokens[tokens.length - 1];
-  let customText = tokens.length > 1 ? tokens.slice(0, -1).join(' ') : '';
+  // Determine target JID and optional custom text
+  let targetJid = null;
+  let customText = '';
 
-  let targetJid = resolveJid(targetRaw, sock);
+  if (mentions.length > 0) {
+    targetJid = mentions[mentions.length - 1];
+    // Remove mention from fullArgs
+    customText = fullArgs.replace(/@\d+/g, '').trim();
+  } else {
+    const tokens = fullArgs.split(/\s+/);
+    const lastToken = tokens[tokens.length - 1];
 
-  if (targetJid && targetJid.endsWith('@lid')) {
-    const best = await getBestUserJid(targetJid, sock);
-    if (best) targetJid = best;
-  }
-
-  if (!targetJid || (!targetJid.endsWith('@s.whatsapp.net') && !targetJid.endsWith('@g.us') && !targetJid.endsWith('@lid'))) {
-    // If last token was not a valid target, maybe whole input is target
-    const resolvedWhole = resolveJid(fullArgs, sock);
-    if (resolvedWhole) {
-      targetJid = resolvedWhole;
-      customText = '';
+    const resolvedLast = await resolveTargetUniversal(sock, lastToken);
+    if (resolvedLast?.jid) {
+      targetJid = resolvedLast.jid;
+      customText = tokens.slice(0, -1).join(' ').trim();
     } else {
-      return sendWithCta(sock, chat, `❌ *Invalid Recipient JID / Phone:* \`${targetRaw}\``, { quoted: msg });
+      const resolvedWhole = await resolveTargetUniversal(sock, fullArgs);
+      if (resolvedWhole?.jid) {
+        targetJid = resolvedWhole.jid;
+        customText = '';
+      }
     }
   }
 
-  const quotedMsg = extractQuotedMessageNode(msg);
+  if (!targetJid) {
+    // Attempt fallback with resolveBoth
+    const res = await resolveBoth(sock, fullArgs, { msg, groupJid: chat });
+    if (res.pn || res.lid) {
+      targetJid = res.pn || res.lid;
+    }
+  }
+
+  if (!targetJid) {
+    return sendWithCta(sock, chat, `❌ *Invalid Recipient JID / Phone / Mention provided.*`, { quoted: msg });
+  }
+
+  if (targetJid.endsWith('@lid')) {
+    const best = await getBestUserJid(targetJid, sock, chat);
+    if (best) targetJid = best;
+  }
+
   const statusMsg = await sock.sendMessage(chat, { text: `⏩ *Forwarding message to ${targetJid}…*` }, { quoted: msg });
 
   try {
-    if (quotedMsg) {
-      // Media is piped download → upload (no file, no buffer)
-      if (quotedMsg.imageMessage) {
-        const node = quotedMsg.imageMessage;
+    if (quotedInfo) {
+      const qm = quotedInfo.quotedMessage;
+      // Handle view once unwrap if present
+      const realQm = qm.viewOnceMessage?.message || qm.viewOnceMessageV2?.message || qm;
+
+      if (realQm.imageMessage) {
+        const node = realQm.imageMessage;
         const stream = await downloadContentFromMessage(node, 'image');
         await sock.sendMessage(targetJid, { image: { stream }, caption: customText || node.caption || '' });
-      }
-      else if (quotedMsg.videoMessage) {
-        const node = quotedMsg.videoMessage;
+      } else if (realQm.videoMessage) {
+        const node = realQm.videoMessage;
         const stream = await downloadContentFromMessage(node, 'video');
         await sock.sendMessage(targetJid, { video: { stream }, caption: customText || node.caption || '' });
-      }
-      else if (quotedMsg.audioMessage) {
-        const node = quotedMsg.audioMessage;
+      } else if (realQm.audioMessage) {
+        const node = realQm.audioMessage;
         const stream = await downloadContentFromMessage(node, 'audio');
         if (customText) await sock.sendMessage(targetJid, { text: customText });
-        await sock.sendMessage(targetJid, { audio: { stream }, mimetype: node.mimetype || 'audio/mpeg', ptt: false });
-      }
-      // Quoted Text
-      else {
-        const textToForward = customText || quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || '';
+        await sock.sendMessage(targetJid, { audio: { stream }, mimetype: node.mimetype || 'audio/mpeg', ptt: Boolean(node.ptt) });
+      } else if (realQm.stickerMessage) {
+        const node = realQm.stickerMessage;
+        const stream = await downloadContentFromMessage(node, 'sticker');
+        if (customText) await sock.sendMessage(targetJid, { text: customText });
+        await sock.sendMessage(targetJid, { sticker: { stream } });
+      } else if (realQm.documentMessage) {
+        const node = realQm.documentMessage;
+        const stream = await downloadContentFromMessage(node, 'document');
+        await sock.sendMessage(targetJid, {
+          document: { stream },
+          mimetype: node.mimetype || 'application/octet-stream',
+          fileName: node.fileName || 'file',
+          caption: customText || node.caption || ''
+        });
+      } else if (realQm.locationMessage) {
+        const node = realQm.locationMessage;
+        if (customText) await sock.sendMessage(targetJid, { text: customText });
+        await sock.sendMessage(targetJid, { location: { degreesLatitude: node.degreesLatitude, degreesLongitude: node.degreesLongitude, name: node.name, address: node.address } });
+      } else if (realQm.contactMessage) {
+        const node = realQm.contactMessage;
+        if (customText) await sock.sendMessage(targetJid, { text: customText });
+        await sock.sendMessage(targetJid, { contacts: { displayName: node.displayName, contacts: [{ vcard: node.vcard }] } });
+      } else {
+        const textToForward = customText || realQm.conversation || realQm.extendedTextMessage?.text || realQm.imageMessage?.caption || realQm.videoMessage?.caption || '';
         if (!textToForward) {
-          throw new Error('Unable to extract text from quoted message.');
+          throw new Error('Unable to extract text or content from quoted message.');
         }
         await sock.sendMessage(targetJid, { text: textToForward });
       }
     } else {
-      // Direct text forward
       if (!customText) {
         throw new Error('No text or quoted message provided to forward.');
       }

@@ -52,14 +52,17 @@ export function setSetting(key, value) {
 }
 
 export function getReplyMode() {
-  // Native-flow buttons from non-business accounts show "Waiting for this
-  // message" on many WhatsApp clients, so plain text is the safe default.
-  // Opt in with WRAITH_REPLY_MODE=buttons or the reply-mode setting.
-  return load().replyMode || (process.env.WRAITH_REPLY_MODE === 'buttons' ? 'buttons' : 'text');
+  const mode = load().replyMode || process.env.WRAITH_REPLY_MODE;
+  if (mode === 'buttons' || mode === 'poll' || mode === 'text') return mode;
+  return 'text';
 }
 
 export function setReplyMode(mode) {
   const s = load();
-  s.replyMode = mode === 'text' ? 'text' : 'buttons';
+  if (mode === 'poll' || mode === 'buttons' || mode === 'text') {
+    s.replyMode = mode;
+  } else {
+    s.replyMode = 'text';
+  }
   persist();
 }
