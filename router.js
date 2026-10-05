@@ -13,7 +13,7 @@ import { isOwner, primeSenderIdentity } from './core/identity.js';
 import { CONFIG } from './config.js';
 import { reqlocationCommand, handleIncomingLocation } from './modules/location.js';
 import { WAMessageStubType } from '@whiskeysockets/baileys';
-import { extractInteractiveResponse, matchChoice } from './lib/buttons.js';
+import { extractInteractiveResponse, matchChoice, handlePollUpdate } from './lib/buttons.js';
 // extras pack (modules/x-*.js)
 import { onMessage as xOnMessage, resolveAlias as xResolveAlias } from './modules/x-hooks.js';
 import { hasExtra as xHasExtra, runExtra as xRunExtra } from './modules/x-registry.js';
@@ -38,6 +38,10 @@ function lazy(modPath, fnName) {
 
 // ── Cold handlers (only loaded when the command is invoked) ──
 const pingCommand     = lazy('./modules/ping.js', 'pingCommand');
+const cpuCommand      = lazy('./modules/ping.js', 'cpuCommand');
+const gpuCommand      = lazy('./modules/ping.js', 'gpuCommand');
+const ramCommand      = lazy('./modules/ping.js', 'ramCommand');
+const romCommand      = lazy('./modules/ping.js', 'romCommand');
 const aliveCommand    = lazy('./modules/ping.js', 'aliveCommand');
 const uptimeCommand   = lazy('./modules/ping.js', 'uptimeCommand');
 const restartCommand  = lazy('./modules/ping.js', 'restartCommand');
@@ -362,6 +366,11 @@ function markCommandProcessed(msgId) {
 
 export async function dispatch(sock, update, sessionId = 'main') {
   await attachBackground(sock);
+  if (sock && !sock.dispatchSimulated) {
+    sock.dispatchSimulated = async (fakeMsg) => {
+      await dispatch(sock, { type: 'notify', messages: [fakeMsg] }, sessionId);
+    };
+  }
   if (update.type && update.type !== 'notify' && update.type !== 'append') return;
 
   for (const msg of update.messages || []) {
@@ -369,6 +378,13 @@ export async function dispatch(sock, update, sessionId = 'main') {
     try {
       const chat = msg.key.remoteJid;
       if (!chat) continue;
+
+      if (msg.message?.pollUpdateMessage) {
+        try {
+          const handled = await handlePollUpdate(sock, msg);
+          if (handled) continue;
+        } catch (e) { console.error('[router] handlePollUpdate', e.message); }
+      }
 
       // Resolve LID senders (owners / secondary owners / developer) first
       await primeSenderIdentity(sock, msg);
@@ -473,7 +489,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
       try { EPHOTO_LIST = await getEphotoList(); } catch { EPHOTO_LIST = ['textmaker']; }
 
       const KNOWN = new Set([...CRITICAL_COMMANDS, ...EPHOTO_LIST,
-        'dl', 'download', 'mp3', 'songinfo', 'help', 'menu', 'ping', 'usermanual',
+        'dl', 'download', 'mp3', 'songinfo', 'help', 'menu', 'ping', 'cpu', 'gpu', 'ram', 'rom', 'usermanual',
         'currency', 'qr', 'define', 'weather', 'pwned', 'owner', 'script', 'repo',
         'img', 'image', 'movie', 'lyrics', 'couplepp',
         'welcome', 'goodbye', 'getpp', 'ig', 'tiktok', 'fb',
@@ -564,6 +580,10 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'peek': await peekCommand(csock, chat, msg, rest); break;
           case 'lurk': await lurkCommand(csock, chat, msg, rest); break;
           case 'ping': await pingCommand(csock, chat, msg); break;
+          case 'cpu': await cpuCommand(csock, chat, msg); break;
+          case 'gpu': await gpuCommand(csock, chat, msg); break;
+          case 'ram': await ramCommand(csock, chat, msg); break;
+          case 'rom': await romCommand(csock, chat, msg); break;
           case 'alive': await aliveCommand(csock, chat, msg); break;
           case 'uptime': await uptimeCommand(csock, chat, msg); break;
           case 'restart': await restartCommand(csock, chat, msg); break;
@@ -714,12 +734,12 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'replymode': {
             if (!senderIsOwner) { await sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg }); break; }
             const modeArg = (rest[0] || '').toLowerCase();
-            if (modeArg === 'text' || modeArg === 'buttons') {
+            if (modeArg === 'text' || modeArg === 'buttons' || modeArg === 'poll') {
               setReplyMode(modeArg);
               await sock.sendMessage(chat, { text: `✅ Reply mode set to *${modeArg}*` }, { quoted: msg });
             } else {
               const cur = getReplyMode();
-              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode buttons\`\n• \`${prefix}replymode text\`` }, { quoted: msg });
+              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode buttons\`\n• \`${prefix}replymode text\`\n• \`${prefix}replymode poll\`` }, { quoted: msg });
             }
             break;
           }

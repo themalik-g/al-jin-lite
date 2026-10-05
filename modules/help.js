@@ -6,30 +6,45 @@ import { isOwner } from '../core/identity.js';
 import { getPrefix } from '../core/settings.js';
 import { NEWSLETTER_CONTEXT, sendWithCta } from '../lib/buttons.js';
 import { X_MENU } from './x-details.js';
+import { containerMemory, uptime } from './ping.js';
+import { CONFIG } from '../config.js';
 
 const MENU_IMAGE = process.env.WRAITH_MENU_IMAGE || 'https://i.picrd.com/images/YZUezOztDow.jpg';
 const CAPTION_MAX = 3000;
 
-// Sends the menu as ONE message. If it fits in an image caption, the banner is
-// attached; otherwise the whole menu goes out as a single text message
-// (never split into two). Falls back to plain text if the image fails.
-async function sendMenu(sock, chat, text, msg) {
+async function sendMenu(sock, chat, text, msg, senderJid) {
+  const mentions = senderJid ? [senderJid] : [];
+  const statusQuoted = {
+    key: {
+      remoteJid: 'status@broadcast',
+      fromMe: false,
+      id: 'ALJIN_STATUS_' + Date.now(),
+      participant: '15551234567@s.whatsapp.net'
+    },
+    message: {
+      extendedTextMessage: {
+        text: 'Verified WhatsApp Business Status ✅'
+      }
+    }
+  };
+  const quotedToUse = statusQuoted;
+
   if (text.length <= CAPTION_MAX) {
     try {
       return await sock.sendMessage(
         chat,
-        { image: { url: MENU_IMAGE }, caption: text, contextInfo: NEWSLETTER_CONTEXT },
-        { quoted: msg }
+        { image: { url: MENU_IMAGE }, caption: text, mentions, contextInfo: NEWSLETTER_CONTEXT },
+        { quoted: quotedToUse }
       );
     } catch (e) {
       try { console.error('[menu:image]', e?.message); } catch {}
     }
   }
   try {
-    return await sock.sendMessage(chat, { text, contextInfo: NEWSLETTER_CONTEXT }, { quoted: msg });
+    return await sock.sendMessage(chat, { text, mentions, contextInfo: NEWSLETTER_CONTEXT }, { quoted: quotedToUse });
   } catch (e) {
     try { console.error('[menu:text]', e?.message); } catch {}
-    return sendWithCta(sock, chat, text, { quoted: msg });
+    return sendWithCta(sock, chat, text, { quoted: quotedToUse, mentions });
   }
 }
 
@@ -53,6 +68,10 @@ const REGISTRY = [
     commands: [
       c('.alive'),
       c('.ping'),
+      c('.cpu'),
+      c('.gpu'),
+      c('.ram'),
+      c('.rom'),
       c('.uptime'),
       c('.restart', true),
       c('.help'),
@@ -484,16 +503,39 @@ function visibleRegistry(isOwnerUser) {
     .filter((g) => g.commands.length > 0);
 }
 
-function renderHeaderBox(prefix, isOwnerUser) {
-  const ownerText = isOwnerUser ? toSmallCaps('COMMANDS ARE OWNER-ONLY') : toSmallCaps('COMMANDS ARE PUBLIC');
-  const guideCmd = applyPrefix('.ᴄᴏᴍᴍᴀɴᴅ ꜰᴏʀ ɢᴜɪᴅᴇ', prefix);
+function getTotalCommandsCount() {
+  let count = 0;
+  for (const g of REGISTRY) {
+    count += g.commands.length;
+  }
+  return count;
+}
+
+function renderHeaderBox(prefix, isOwnerUser, senderJid) {
+  const userMention = senderJid ? `@${senderJid.split('@')[0]}` : '@user';
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
+  const dayStr = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const dateStr = now.toISOString().slice(0, 10);
+  const mem = containerMemory();
+  const ramStr = `${(mem.used / 1024 / 1024).toFixed(1)} / ${(mem.limit / 1024 / 1024).toFixed(1)} MB`;
+  const uptimeStr = uptime();
+  const totalCmds = getTotalCommandsCount();
+  const botVer = CONFIG.version || '1.4.0';
+
   return [
     '      【 🤖 𝐀𝐥-𝐉𝐢𝐧 🤖 】',
     '┌──────────────────┈⚝',
-    `│ ${ownerText}`,
-    `│ ${toSmallCaps('PREFIX')} · ${prefix}`,
-    `│ ℹ️ ${guideCmd}`,
-    '│',
+    `│ Prefix: ${prefix}`,
+    `│ User: ${userMention}`,
+    `│ Time: ${timeStr}`,
+    `│ Day: ${dayStr}`,
+    `│ Date: ${dateStr}`,
+    `│ Version: ${botVer}`,
+    `│ Commands: ${totalCmds}`,
+    `│ Ram: ${ramStr}`,
+    `│ Uptime: ${uptimeStr}`,
+    `│ Platform: vps (Linux generic)`,
     '└──────────────────┈⚝',
   ].join('\n');
 }
@@ -519,8 +561,8 @@ function renderCategoryBox(group, prefix, isOwnerUser) {
   return lines.join('\n');
 }
 
-function renderAllPlainText(prefix, isOwnerUser) {
-  const header = renderHeaderBox(prefix, isOwnerUser);
+function renderAllPlainText(prefix, isOwnerUser, senderJid) {
+  const header = renderHeaderBox(prefix, isOwnerUser, senderJid);
   const groups = visibleRegistry(isOwnerUser);
   const categoryBoxes = [];
 
@@ -554,8 +596,8 @@ export async function helpCommand(sock, chat, msg, args) {
     const target = (args?.[0] || '').toLowerCase().trim();
 
     if (!target) {
-      const text = renderAllPlainText(prefix, isOwnerUser);
-      return await sendMenu(sock, chat, text, msg);
+      const text = renderAllPlainText(prefix, isOwnerUser, from);
+      return await sendMenu(sock, chat, text, msg, from);
     }
 
     const group = findGroup(target);
@@ -583,9 +625,9 @@ export async function helpCommand(sock, chat, msg, args) {
       );
     }
 
-    const text = [renderHeaderBox(prefix, isOwnerUser), box].join('\n');
+    const text = [renderHeaderBox(prefix, isOwnerUser, from), box].join('\n');
 
-    return await sendMenu(sock, chat, text, msg);
+    return await sendMenu(sock, chat, text, msg, from);
   } catch (e) {
     try {
       await sock.sendMessage(

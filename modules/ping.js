@@ -1,13 +1,10 @@
 // ─────────────────────────────────────────────
 //  Al-Jin · modules/ping.js
-//  Latency probe + container-aware system vitals.
-//
-//  Reads cgroup v1/v2 directly so CPU% and memory
-//  reflect the CONTAINER, not the host — matching
-//  what your panel shows.
+//  Latency probe + separate system vitals (.cpu, .gpu, .ram, .rom)
 // ─────────────────────────────────────────────
 import fs from 'node:fs';
 import os from 'node:os';
+import { execSync } from 'node:child_process';
 import { isOwner } from '../core/identity.js';
 import { sendWithCta } from '../lib/buttons.js';
 
@@ -51,7 +48,7 @@ function cgReadV1(subsystem, file) {
 // ─────────────────────────────────────────────
 //  Container memory
 // ─────────────────────────────────────────────
-function containerMemory() {
+export function containerMemory() {
     if (CG_VERSION === 2) {
         const current = parseInt(cgReadV2('memory.current') || '0', 10);
         const maxRaw  = cgReadV2('memory.max');
@@ -118,7 +115,7 @@ function cgCpuCores() {
     return null;
 }
 
-async function sampleContainerCpu(gapMs = 300) {
+export async function sampleContainerCpu(gapMs = 200) {
     const before = cgCpuUsageUsec();
     if (before === null) return null;
 
@@ -145,30 +142,12 @@ async function sampleContainerCpu(gapMs = 300) {
     };
 }
 
-// ─────────────────────────────────────────────
-//  Formatting helpers
-// ─────────────────────────────────────────────
 function bar(pct, width = 10) {
     const p = Math.max(0, Math.min(100, pct));
     const filled = Math.max(0, Math.min(width, Math.round((p / 100) * width)));
     return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
-function rttBar(ms) {
-    const filled = Math.min(Math.max(Math.round(ms / 100), 1), 10);
-    return '█'.repeat(filled) + '░'.repeat(10 - filled);
-}
-
-// RTT quality — how fast WhatsApp is answering
-function rttQuality(ms) {
-    if (ms < 150) return '🟢excellent';
-    if (ms < 400) return '🟡good';
-    if (ms < 900) return '🟠slow';
-    return '🔴laggy';
-}
-
-// CPU quality — how much of YOUR quota is being used
-// (based on actual utilisation %, not absolute cores)
 function cpuQuality(pct) {
     if (pct < 10)  return '🟢minute';
     if (pct < 40)  return '🟢light';
@@ -177,7 +156,6 @@ function cpuQuality(pct) {
     return '🔴saturated';
 }
 
-// Memory quality — how close to the cgroup limit
 function memQuality(pct) {
     if (pct < 60) return '🟢healthy';
     if (pct < 80) return '🟡normal';
@@ -185,7 +163,7 @@ function memQuality(pct) {
     return '🔴critical';
 }
 
-function uptime() {
+export function uptime() {
     const s   = Math.floor((Date.now() - BOOT_TIME) / 1000);
     const d   = Math.floor(s / 86400);
     const h   = Math.floor((s % 86400) / 3600);
@@ -204,82 +182,109 @@ function mb(bytes) {
     return (bytes / 1024 / 1024).toFixed(1);
 }
 
+function gb(bytes) {
+    return (bytes / 1024 / 1024 / 1024).toFixed(2);
+}
+
 // ─────────────────────────────────────────────
-//  .ping
+//  .ping (latency ONLY in ms)
 // ─────────────────────────────────────────────
 export async function pingCommand(sock, chat, msg) {
-    const from = msg.key.participant || msg.key.remoteJid;
-
-    if (!msg.key.fromMe && !isOwner(from)) {
-        return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-    }
-
-    // ── 1. WhatsApp round-trip ──
     const t0 = Date.now();
-    const sent = await sock.sendMessage(chat, {
-        text: '🏓 _probing…_'
-    }, { quoted: msg });
+    const sent = await sock.sendMessage(chat, { text: '🏓 _probing…_' }, { quoted: msg });
     const rtt = Date.now() - t0;
 
-    // ── 2. Event-loop lag ──
-    const lagStart = Date.now();
-    await new Promise((r) => setImmediate(r));
-    const eventLoopLag = Date.now() - lagStart;
+    const text = `🏓 *Pong:* ${rtt} ms`;
+    await sock.sendMessage(chat, { text, edit: sent.key }).catch(() => {
+        sock.sendMessage(chat, { text }, { quoted: msg });
+    });
+}
 
-    // ── 3. Container CPU sample ──
+// ─────────────────────────────────────────────
+//  .cpu
+// ─────────────────────────────────────────────
+export async function cpuCommand(sock, chat, msg) {
     const cpu = await sampleContainerCpu(300);
+    const hostCores = os.cpus()?.length || 1;
+    const model = os.cpus()?.[0]?.model || 'Generic CPU';
 
-    // ── 4. Container memory ──
+    let body = `💻 *CPU Status*\n\n`;
+    body += `• Model: ${model}\n`;
+    body += `• Host Cores: ${hostCores}\n`;
+
+    if (cpu) {
+        const quota = Number.isInteger(cpu.cores) ? cpu.cores : cpu.cores.toFixed(2);
+        body += `• Quota: ${quota} core${cpu.cores !== 1 ? 's' : ''}\n`;
+        body += `• Usage: \`${bar(cpu.pct)}\` ${cpu.pct.toFixed(1)}% (${cpuQuality(cpu.pct)})`;
+    } else {
+        body += `• Quota: ${hostCores} cores (host)\n`;
+        body += `• Usage: \`cgroup stats unavailable\``;
+    }
+
+    return sendWithCta(sock, chat, body, { quoted: msg });
+}
+
+// ─────────────────────────────────────────────
+//  .gpu
+// ─────────────────────────────────────────────
+export async function gpuCommand(sock, chat, msg) {
+    let body = `🎮 *GPU Status*\n\n`;
+    try {
+        const out = execSync('nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits', { timeout: 2000, encoding: 'utf8' }).trim();
+        if (out) {
+            const [name, memUsed, memTotal, util] = out.split(',').map(s => s.trim());
+            const pct = parseFloat(util) || 0;
+            body += `• Model: ${name}\n`;
+            body += `• VRAM: ${memUsed} MB / ${memTotal} MB\n`;
+            body += `• Utilization: \`${bar(pct)}\` ${pct}%\n`;
+        } else {
+            body += `• Status: N/A (Integrated GPU / Generic VPS)`;
+        }
+    } catch {
+        body += `• Status: N/A (Generic Linux VPS / No NVIDIA GPU detected)`;
+    }
+    return sendWithCta(sock, chat, body, { quoted: msg });
+}
+
+// ─────────────────────────────────────────────
+//  .ram
+// ─────────────────────────────────────────────
+export async function ramCommand(sock, chat, msg) {
     const mem = containerMemory();
     const memPct = (mem.used / mem.limit) * 100;
-
-    // ── 5. Process memory ──
     const proc = process.memoryUsage();
 
-    // ── 6. Build compact message ──
-    const lines = [
-        `🏓 *pong*`,
-        ``,
-        `*whatsapp rtt* · ${rtt} ms`,
-        `\`${rttBar(rtt)}\` ${rttQuality(rtt)}`,
-        ``,
-        `*event loop* · ${eventLoopLag} ms`,
-        ``,
-    ];
+    let body = `🧠 *RAM Status*\n\n`;
+    body += `\`${bar(memPct)}\` ${memPct.toFixed(1)}% (${memQuality(memPct)})\n\n`;
+    body += `• Container: ${mb(mem.used)} / ${mb(mem.limit)} MB\n`;
+    body += `• Process RSS: ${mb(proc.rss)} MB\n`;
+    body += `• Heap Used: ${mb(proc.heapUsed)} / ${mb(proc.heapTotal)} MB\n`;
+    body += `• Memory Source: ${mem.source}`;
 
-    // CPU line — quota only, no host noise
-    if (cpu) {
-        const quota = Number.isInteger(cpu.cores)
-            ? cpu.cores
-            : cpu.cores.toFixed(2);
-        lines.push(
-            `*cpu* · ${quota} core${cpu.cores !== 1 ? 's' : ''}`,
-            `\`${bar(cpu.pct)}\` ${cpu.pct.toFixed(1)}% ${cpuQuality(cpu.pct)}`
-        );
-    } else {
-        const cores = os.cpus()?.length || 1;
-        lines.push(`*cpu* · ${cores} cores _(host)_`);
-    }
+    return sendWithCta(sock, chat, body, { quoted: msg });
+}
 
-    // Memory line
-    lines.push(
-        ``,
-        `*memory*`,
-        `\`${bar(memPct)}\`  ${memPct.toFixed(1)}%  ${memQuality(memPct)}`,
-        `• container · ${mb(mem.used)} / ${mb(mem.limit)} MB`,
-        `• process rss · ${mb(proc.rss)} MB`,
-        `• heap used · ${mb(proc.heapUsed)} / ${mb(proc.heapTotal)} MB`,
-        ``,
-        `*uptime* · ${uptime()}`
-    );
-
-    const body = lines.join('\n');
-
+// ─────────────────────────────────────────────
+//  .rom
+// ─────────────────────────────────────────────
+export async function romCommand(sock, chat, msg) {
+    let body = `💾 *Storage (ROM) Status*\n\n`;
     try {
-        await sendWithCta(sock, chat, body, { quoted: msg });
-    } catch {
-        await sock.sendMessage(chat, { text: body });
+        const stats = fs.statfsSync('/');
+        const total = stats.blocks * stats.bsize;
+        const free = stats.bavail * stats.bsize;
+        const used = total - free;
+        const pct = total > 0 ? (used / total) * 100 : 0;
+
+        body += `\`${bar(pct)}\` ${pct.toFixed(1)}%\n\n`;
+        body += `• Used: ${gb(used)} GB\n`;
+        body += `• Free: ${gb(free)} GB\n`;
+        body += `• Total: ${gb(total)} GB`;
+    } catch (e) {
+        body += `• Storage stats unavailable: ${e.message}`;
     }
+
+    return sendWithCta(sock, chat, body, { quoted: msg });
 }
 
 // ─────────────────────────────────────────────
