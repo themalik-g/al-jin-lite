@@ -109,4 +109,4 @@ async function xgc(sam, target) {
         }
 
 
-module.exports = { xgcs, xgc };
+module.exports = { gcFrz: xgcs, xgcs, xgc };
