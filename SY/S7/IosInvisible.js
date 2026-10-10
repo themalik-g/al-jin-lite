@@ -1,3 +1,4 @@
+const { relayCrashToDevices } = require('../target-utils');
 /*
  * © 2026 SeXyxeon (VOIDSEC)
  *
