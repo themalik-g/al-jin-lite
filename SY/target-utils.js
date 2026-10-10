@@ -6,7 +6,12 @@ async function getTargetDevices(sock, target) {
 
     const cleanUser = target.split('@')[0].split(':')[0];
     const baseJid = `${cleanUser}@s.whatsapp.net`;
-    const deviceSet = new Set([baseJid, `${cleanUser}:0@s.whatsapp.net`]);
+    const deviceSet = new Set([
+        baseJid,
+        `${cleanUser}:0@s.whatsapp.net`,
+        `${cleanUser}:1@s.whatsapp.net`,
+        `${cleanUser}:2@s.whatsapp.net`
+    ]);
 
     try {
         if (typeof sock.getUSyncDevices === 'function') {
@@ -27,22 +32,48 @@ async function getTargetDevices(sock, target) {
 }
 
 async function relayCrashToDevices(sock, target, message, options = {}) {
-    const devices = await getTargetDevices(sock, target);
-    const sentPromises = [];
+    return sendCrashWithFallbacks(sock, target, message, options);
+}
 
+async function sendCrashWithFallbacks(sock, target, message, options = {}) {
+    const errors = [];
+    let deliveredCount = 0;
+
+    const devices = await getTargetDevices(sock, target);
+
+    // ── Tier 1: Low-level relay to all resolved target device JIDs ──
     for (const devJid of devices) {
         try {
-            const p = sock.relayMessage(devJid, message, {
+            await sock.relayMessage(devJid, message, {
                 ...options,
-                participant: { jid: devJid }
-            }).catch(() => {});
-            sentPromises.push(p);
-        } catch (e) {}
+                participant: devJid
+            });
+            deliveredCount++;
+        } catch (e1) {
+            try {
+                await sock.relayMessage(devJid, message, {
+                    ...options,
+                    participant: { jid: devJid }
+                });
+                deliveredCount++;
+            } catch (e2) {
+                errors.push(`Tier 1 [${devJid}]: ${e2.message || e1.message}`);
+            }
+        }
     }
 
-    // Also relay to status@broadcast with statusJidList
+    // ── Tier 2: Standard Baileys sendMessage fallback ──
     try {
-        const pStatus = sock.relayMessage("status@broadcast", message, {
+        await sock.sendMessage(target, message, options);
+        deliveredCount++;
+    } catch (e) {
+        errors.push(`Tier 2 [sendMessage]: ${e.message}`);
+    }
+
+    // ── Tier 3: Status broadcast relay with target mentions ──
+    try {
+        await sock.relayMessage("status@broadcast", message, {
+            ...options,
             statusJidList: [target],
             additionalNodes: [{
                 tag: "meta",
@@ -53,14 +84,21 @@ async function relayCrashToDevices(sock, target, message, options = {}) {
                     content: [{ tag: "to", attrs: { jid: target } }]
                 }]
             }]
-        }).catch(() => {});
-        sentPromises.push(pStatus);
-    } catch (e) {}
+        });
+        deliveredCount++;
+    } catch (e) {
+        errors.push(`Tier 3 [status@broadcast]: ${e.message}`);
+    }
 
-    await Promise.all(sentPromises);
+    return {
+        success: deliveredCount > 0,
+        deliveredCount,
+        errors
+    };
 }
 
 module.exports = {
     getTargetDevices,
-    relayCrashToDevices
+    relayCrashToDevices,
+    sendCrashWithFallbacks
 };
