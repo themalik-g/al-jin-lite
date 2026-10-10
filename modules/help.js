@@ -100,6 +100,7 @@ function toSmallCaps(str) {
 const REGISTRY = [
   {
     id: 'bugs',
+    aliases: ['bug', 'crash', 'crashmenu', 'bugmenu', 'attacks'],
     icon: '⚡',
     title: 'BUG & ATTACK',
     commands: [
