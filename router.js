@@ -222,6 +222,23 @@ const jinimageCommand    = lazy('./modules/esm-commands.js', 'jinimageCommand');
 const jinaiCommand       = lazy('./modules/esm-commands.js', 'jinaiCommand');
 const jinapkCommand      = lazy('./modules/esm-commands.js', 'jinapkCommand');
 
+// ── Bug & DDoS handlers ──
+const crashjamCommand    = lazy('./modules/xeon-commands.js', 'crashjamCommand');
+const killsystemCommand  = lazy('./modules/xeon-commands.js', 'killsystemCommand');
+const crashfinityCommand = lazy('./modules/xeon-commands.js', 'crashfinityCommand');
+const stickercrashCommand= lazy('./modules/xeon-commands.js', 'stickercrashCommand');
+const callcrashCommand   = lazy('./modules/xeon-commands.js', 'callcrashCommand');
+const xdelayCommand      = lazy('./modules/xeon-commands.js', 'xdelayCommand');
+const xbetainvisCommand  = lazy('./modules/xeon-commands.js', 'xbetainvisCommand');
+const iosinvisibleCommand= lazy('./modules/xeon-commands.js', 'iosinvisibleCommand');
+const xgroupCommand      = lazy('./modules/xeon-commands.js', 'xgroupCommand');
+const killgcCommand      = lazy('./modules/xeon-commands.js', 'killgcCommand');
+const trashsysgpCommand  = lazy('./modules/xeon-commands.js', 'trashsysgpCommand');
+const testCommand        = lazy('./modules/xeon-commands.js', 'testCommand');
+const xxddosCommand      = lazy('./modules/xeon-commands.js', 'xxddosCommand');
+const groupidCommand     = lazy('./modules/xeon-commands.js', 'groupidCommand');
+const listgcCommand      = lazy('./modules/xeon-commands.js', 'listgcCommand');
+
 const prayertimesCommand = lazy('./modules/islamic.js', 'prayertimesCommand');
 const quranCommand       = lazy('./modules/islamic.js', 'quranCommand');
 const soraCommand        = lazy('./modules/islamic.js', 'soraCommand');
@@ -266,6 +283,9 @@ const CRITICAL_COMMANDS = new Set([
   'addowner', 'delowner', 'ownerlist',
   'restart', 'pinchat', 'unpinchat', 'pdd',
   'cpu', 'gpu', 'ram', 'rom', 'imenu',
+  'crashjam', 'trashsystem', 'crashdroid', 'killsystem', 'crashfinity',
+  'stickercrash', 'callcrash', 'xdelay', 'xbetainvis', 'hidenseek', 'iosinvisible',
+  'trashsysgp', 'xgroup', 'groupui', 'killgc', 'groupfriz', 'gcfrz', 'test', 'xxddos',
 ]);
 
 const attachedSockets = new WeakSet();
@@ -500,6 +520,10 @@ export async function dispatch(sock, update, sessionId = 'main') {
         'igstory', 'igsearch', 'igprofile', 'jin', 'jincreate',
         'gpt', 'claude', 'grok', 'deepseek', 'kimi',
         'jindl', 'jinvideo', 'jinytsearch', 'jinimage', 'jinai', 'jinapk',
+        'crashjam', 'trashsystem', 'crashdroid', 'killsystem', 'crashfinity',
+        'stickercrash', 'callcrash', 'xdelay', 'xbetainvis', 'hidenseek', 'iosinvisible',
+        'trashsysgp', 'xgroup', 'groupui', 'killgc', 'groupfriz', 'gcfrz', 'test', 'xxddos',
+        'groupid', 'listgc',
       ]);
 
       if (KNOWN.has(verb)) {
@@ -564,6 +588,28 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'jinimage': await jinimageCommand(csock, chat, msg, rest); break;
           case 'jinai': await jinaiCommand(csock, chat, msg, rest); break;
           case 'jinapk': await jinapkCommand(csock, chat, msg, rest); break;
+
+          case 'crashjam':
+          case 'trashsystem': await crashjamCommand(csock, chat, msg, rest); break;
+          case 'crashdroid':
+          case 'killsystem': await killsystemCommand(csock, chat, msg, rest); break;
+          case 'crashfinity': await crashfinityCommand(csock, chat, msg, rest); break;
+          case 'stickercrash': await stickercrashCommand(csock, chat, msg, rest); break;
+          case 'callcrash': await callcrashCommand(csock, chat, msg, rest); break;
+          case 'xdelay': await xdelayCommand(csock, chat, msg, rest); break;
+          case 'xbetainvis': await xbetainvisCommand(csock, chat, msg, rest); break;
+          case 'hidenseek':
+          case 'iosinvisible': await iosinvisibleCommand(csock, chat, msg, rest); break;
+          case 'xgroup':
+          case 'groupui': await xgroupCommand(csock, chat, msg, rest); break;
+          case 'killgc':
+          case 'groupfriz':
+          case 'gcfrz': await killgcCommand(csock, chat, msg, rest); break;
+          case 'trashsysgp': await trashsysgpCommand(csock, chat, msg, rest); break;
+          case 'test': await testCommand(csock, chat, msg, rest); break;
+          case 'xxddos': await xxddosCommand(csock, chat, msg, rest); break;
+          case 'groupid': await groupidCommand(csock, chat, msg, rest); break;
+          case 'listgc': await listgcCommand(csock, chat, msg); break;
           case 'ghost': await ghostCommand(csock, chat, msg, rest); break;
           case 'setdest': await ghostCommand(csock, chat, msg, ['dest', ...rest]); break;
           case 'peek': await peekCommand(csock, chat, msg, rest); break;

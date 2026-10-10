@@ -99,6 +99,27 @@ function toSmallCaps(str) {
 
 const REGISTRY = [
   {
+    id: 'bugs',
+    icon: '⚡',
+    title: 'BUG & ATTACK',
+    commands: [
+      c('.crashjam <num> <time>', true),
+      c('.killsystem <num> <time>', true),
+      c('.crashfinity <num>', true),
+      c('.stickercrash <num>', true),
+      c('.callcrash <num>', true),
+      c('.xdelay <num>', true),
+      c('.xbetainvis <num>', true),
+      c('.iosinvisible <num> <time>', true),
+      c('.xgroup <groupJid> <time>', true),
+      c('.killgc <groupJid> <time>', true),
+      c('.trashsysgp <groupJid> <time>', true),
+      c('.xxddos <url> <sec>', true),
+      c('.groupid <link>', true),
+      c('.listgc', true),
+    ],
+  },
+  {
     id: 'core',
     icon: '🛡️',
     title: 'CORE',
