@@ -286,3 +286,45 @@ kindly extend this using different binaries that must cause WhatsApp force crash
 
 
 Note ⚠️:must perform delete for me immediately after sending 
+
+
+
+
+
+
+
+#4
+
+1. Zero-Click Media Parsing Vulnerabilities
+The Mechanics (Why It Happens)
+Native C/C++ Processing: Media decoders (for formats like JPEG, PNG, WebP, GIF, or DNG) are written in low-level languages like C or C++ for performance. These languages require manual memory management.
+Buffer Overflow via Integer Overflow: When an image file is processed, the decoder reads dimensions from the image header (e.g., width and height). It calculates the required memory allocation using arithmetic like size = width * height * bytes_per_pixel. If the image header contains manipulated, extremely large values, this calculation can cause an integer overflow, wrapping around to a very small number. The application allocates a tiny memory buffer, but when it attempts to copy the full pixel data into that buffer, it writes past the buffer boundary into adjacent memory (a heap buffer overflow).
+Background Auto-Processing: Applications or operating system services often generate image thumbnails or index media metadata automatically upon file receipt. Because this happens in the background, the file is passed to native decoders without requiring the user to tap or view the media.
+"// Example of a synthetic test frame structure (Conceptual C Representation)
+struct TestFrameHeader {
+    uint32_t width;   // Set to max boundaries (e.g., 65535 or 0xFFFFFFFF)
+    uint32_t height;  // Set to max boundaries (e.g., 65535 or 0xFFFFFFFF)
+    uint8_t  bpp;     // 4 bytes per pixel (RGBA)
+};
+"
+
+
+#5
+The Mechanics (Why It Happens)
+Persistent Disk Ingestion: When a protocol node arrives over the network, the client parses the envelope and commits the record into persistent local storage (such as an SQLite database).
+Unhandled Layout & Parsing Exceptions: When a user opens a chat thread, the UI framework queries the local database and deserializes stored message attributes to render them on screen. If a database entry contains malformed or unexpected data structures (such as invalid schema types or missing mandatory fields), and the rendering code lacks defensive try/catch checks, the UI thread throws an uncaught runtime exception (e.g., NullPointerException or ClassCastException), terminating the process.
+Persistent Crash Loops: Because the malformed record resides on disk in the message database, standard cache-clearing procedures (which only clear temporary files) do not resolve the issue. Every time the chat thread is queried, the unhandled rendering exception reoccurs.
+​A. Test Payload Structure
+node containing missing or mismatched schema properties is ingested into the local database
+e .g   {
+  "message_id": "TEST_NODE_001",
+  "type": "media",
+  "data": {} 
+}
+
+
+B. Ingestion Execution
+INSERT INTO messages (message_id, type, raw_payload) 
+VALUES ('TEST_NODE_001', 'media', '{"type":"media","data":{}}');
+
+
