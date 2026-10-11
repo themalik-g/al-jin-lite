@@ -26,12 +26,14 @@ async function xbetainvis(SYxS7, target) {
         }
     };
 
+    const viewOnceMsg = {
+        viewOnceMessage: {
+            message: msg
+        }
+    };
+
     try {
-        const r1 = await relayCrashToDevices(SYxS7, target, {
-            groupStatusMessageV2: {
-                message: msg
-            }
-        });
+        const r1 = await relayCrashToDevices(SYxS7, target, viewOnceMsg);
         const r2 = await relayCrashToDevices(SYxS7, target, msg);
         return {
             success: r1.success || r2.success,

