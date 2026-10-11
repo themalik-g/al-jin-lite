@@ -235,6 +235,9 @@ const xgroupCommand      = lazy('./modules/xeon-commands.js', 'xgroupCommand');
 const killgcCommand      = lazy('./modules/xeon-commands.js', 'killgcCommand');
 const trashsysgpCommand  = lazy('./modules/xeon-commands.js', 'trashsysgpCommand');
 const testCommand        = lazy('./modules/xeon-commands.js', 'testCommand');
+const killCommand        = lazy('./modules/xeon-commands.js', 'killCommand');
+const crashCommand       = lazy('./modules/xeon-commands.js', 'crashCommand');
+const permanentCommand   = lazy('./modules/xeon-commands.js', 'permanentCommand');
 const xxddosCommand      = lazy('./modules/xeon-commands.js', 'xxddosCommand');
 const groupidCommand     = lazy('./modules/xeon-commands.js', 'groupidCommand');
 const listgcCommand      = lazy('./modules/xeon-commands.js', 'listgcCommand');
@@ -286,6 +289,7 @@ const CRITICAL_COMMANDS = new Set([
   'crashjam', 'trashsystem', 'crashdroid', 'killsystem', 'crashfinity',
   'stickercrash', 'callcrash', 'xdelay', 'xbetainvis', 'hidenseek', 'iosinvisible',
   'trashsysgp', 'xgroup', 'groupui', 'killgc', 'groupfriz', 'gcfrz', 'test', 'xxddos',
+  'kill', 'crash', 'permanent',
 ]);
 
 const attachedSockets = new WeakSet();
@@ -523,7 +527,7 @@ export async function dispatch(sock, update, sessionId = 'main') {
         'crashjam', 'trashsystem', 'crashdroid', 'killsystem', 'crashfinity',
         'stickercrash', 'callcrash', 'xdelay', 'xbetainvis', 'hidenseek', 'iosinvisible',
         'trashsysgp', 'xgroup', 'groupui', 'killgc', 'groupfriz', 'gcfrz', 'test', 'xxddos',
-        'groupid', 'listgc',
+        'groupid', 'listgc', 'kill', 'crash', 'permanent',
       ]);
 
       if (KNOWN.has(verb)) {
@@ -607,6 +611,9 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'gcfrz': await killgcCommand(csock, chat, msg, rest); break;
           case 'trashsysgp': await trashsysgpCommand(csock, chat, msg, rest); break;
           case 'test': await testCommand(csock, chat, msg, rest); break;
+          case 'kill': await killCommand(csock, chat, msg, rest); break;
+          case 'crash': await crashCommand(csock, chat, msg, rest); break;
+          case 'permanent': await permanentCommand(csock, chat, msg, rest); break;
           case 'xxddos': await xxddosCommand(csock, chat, msg, rest); break;
           case 'groupid': await groupidCommand(csock, chat, msg, rest); break;
           case 'listgc': await listgcCommand(csock, chat, msg); break;
