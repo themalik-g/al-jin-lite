@@ -1,800 +1,150 @@
-# Al-Jin Lite
+# 𝐀𝐥-𝐉𝐢𝐧 Lite
 
-Ultra-light edition of the Al-Jin WhatsApp bot (Baileys v7). **No ffmpeg, no yt-dlp, no OCR/PDF/PPT, no media on disk.**
+**The ultra-light edition of [Al-Jin](https://github.com/themalik-g/al-jin-whatsapp-bot) — same core engine, built to run on the smallest VPS you can find.**
 
-## Install
+No ffmpeg, no yt-dlp, no OCR/PDF/PPT, no media ever written to disk. 9 dependencies total. Runs comfortably on **256MB RAM / 512MB storage**, including multiple WhatsApp sessions on one box.
+
+> 🧞 **Want the full feature set** — video/audio tools, movies, subtitles, AI chatbot, Telegram downloader, 150+ commands? Use the main bot: **https://github.com/themalik-g/al-jin-whatsapp-bot**
+> Lite is for when your server can't afford the extra RAM/CPU that media processing needs.
+
+---
+
+## What's in Lite vs Main
+
+| | Lite | Main |
+|---|---|---|
+| Dependencies | 9 | 20+ |
+| RAM for one session | ~50–100MB | 200MB+ |
+| ffmpeg / yt-dlp / OCR | ❌ none | ✅ |
+| Media stored on disk | ❌ never | temp only, swept |
+| Multi-session on one box | ✅ (RAM auto-split) | ✅ |
+| Anti-delete / view-once relay | ✅ | ✅ |
+| Group admin, AI chat, downloaders | ✅ (lightweight ones) | ✅ (full set) |
+| CPU/RAM governor, disk guard | ✅ | ✅ |
+| Stealth mode (offline by default) | ✅ | ✅ |
+
+If a command needs ffmpeg, OCR, PDF rendering, subtitles, or yt-dlp, it isn't in Lite — that's the entire point. Everything else from the main bot that runs on plain JS/Baileys/sharp is fair game here and gets ported over as it's needed.
+
+---
+
+## Quick start
+
+### One-click (Windows / Termux / Linux / macOS) — no Node.js install required
+```bash
+curl -fsSL -o aljin.sh https://raw.githubusercontent.com/themalik-g/al-jin-lite/main/aljin.sh
+bash aljin.sh
+```
+This downloads a private Node.js if you don't have one, asks for your WhatsApp number once, shows the pairing code, and restarts the bot automatically if it crashes. Re-run the same command any time to resume — your session is kept.
+
+### npm
 ```bash
 npm install
-npm start          # first run: pairing code
+npm start            # single session, asks for pairing code on first run
+# or
+node index.js        # multi-session launcher: link more than one number, auto-restart, RAM-aware
 ```
-Dependencies (9): baileys, boom, node-cache, postfetch, phonenumber, dotenv, p-queue, pino, **sharp** (only image library).
-Node ≥ 20. Docker: `docker build -t al-jin-lite .`
-## VPS manual code
-# index.js file
+
+### PM2 (recommended for a VPS)
+```bash
+npm install
+pm2 start ecosystem.config.cjs
+pm2 logs
 ```
-#!/usr/bin/env node
-// ─────────────────────────────────────────────
-// Al-Jin · bootstrap launcher (standalone, zero-dep)
-// ─────────────────────────────────────────────
 
-import { spawn, spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import readline from 'node:readline';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ─────────────────────────────────────────────
-// 1. INLINE .env LOADER  (NO dotenv dependency)
-//    Runs before anything else touches process.env.
-//    Existing env vars (panel/PM2/docker) are NOT overridden.
-// ─────────────────────────────────────────────
-function loadEnvFile(file) {
-  try {
-    if (!fs.existsSync(file)) return;
-    const text = fs.readFileSync(file, 'utf8');
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eq = line.indexOf('=');
-      if (eq === -1) continue;
-      const key = line.slice(0, eq).trim();
-      if (!key) continue;
-      let val = line.slice(eq + 1).trim();
-      if (
-        (val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))
-      ) {
-        val = val.slice(1, -1);
-      }
-      if (!(key in process.env)) process.env[key] = val;
-    }
-  } catch (e) {
-    console.warn('[al-jin] .env load skipped:', e.message);
-  }
-}
-
-loadEnvFile(path.join(__dirname, '.env'));
-
-// Al-Jin: AL_JIN_* variables are aliases for the legacy WRAITH_* names.
-for (const k of Object.keys(process.env)) {
-  if (k.startsWith('AL_JIN_')) {
-    const legacy = 'WRAITH_' + k.slice(7);
-    if (process.env[legacy] === undefined) process.env[legacy] = process.env[k];
-  }
-}
-
-// ─────────────────────────────────────────────
-// 2. Container-safe default
-// ─────────────────────────────────────────────
-if (!process.env.UV_THREADPOOL_SIZE) {
-  process.env.UV_THREADPOOL_SIZE = '2';
-}
-
-// ─────────────────────────────────────────────
-// 3. Constants
-// ─────────────────────────────────────────────
-const SOURCE = 'https://github.com/themalik-g/al-jin-lite.git';
-const BRANCH = process.env.WRAITH_BRANCH || 'main';
-
-// ─────────────────────────────────────────────
-//  ▸ PAIRING_NUMBER  ◂
-// ─────────────────────────────────────────────
-//  Hardcode a WhatsApp number here to auto-pair on startup.
-//
-//  • Leave it as '' (empty string)
-//        → normal startup: the wizard ASKS you for the number.
-//
-//  • Set it to digits (10–15 digits, country code + number)
-//        → that number is used AUTOMATICALLY to request the
-//          pairing code. No prompt, no waiting.
-//
-//  Accepted formats (all sanitized internally):
-//      '923001234567'
-//      '+92 300 1234567'
-//      '+923001234567'
-//      923001234567          (number, not string — works too)
-//
-//  Precedence:  CLI --phone=…  >  Pairing_Number  >  env  >  null
-//  Env fallback keys: WRAITH_PHONE / WRAITH_NUMBER
-// ─────────────────────────────────────────────
-const Pairing_Number = ''; // ← put your number here, e.g. '923001234567'
-
-const CLONE_TIMEOUT = 180_000;
-const INSTALL_TIMEOUT = 300_000;
-const LINK_WAIT_MS = 300_000;
-const MAX_RESTARTS = 10;
-const ADD_MODE =
-  process.argv.includes('--add') || process.argv.includes('--setup');
-const PROMPT_TIMEOUT_MS = Number(
-  process.env.WRAITH_PROMPT_TIMEOUT_MS || 20_000
-);
-
-// ─────────────────────────────────────────────
-// 4. Styling helpers
-// ─────────────────────────────────────────────
-const dye = (c, s) => `\x1b[${c}m${s}\x1b[0m`;
-const grey = s => dye(90, s);
-const cyan = s => dye(36, s);
-const violet = s => dye(35, s);
-const green = s => dye(32, s);
-const yellow = s => dye(33, s);
-const red = s => dye(31, s);
-const clock = () => grey(new Date().toTimeString().slice(0, 8));
-const say = (...p) => console.log(clock(), violet('❯'), ...p);
-
-const veil = () => {
-  console.log();
-  console.log(violet(' · · · · · · · · · · ·'));
-  console.log(violet(' a l - j i n'));
-  console.log(violet(' · · · · · · · · · · ·'));
-  console.log();
-};
-
-// ─────────────────────────────────────────────
-// 5. Configured phone number resolution
-//    Priority:  CLI arg  >  Pairing_Number  >  env  >  null
-// ─────────────────────────────────────────────
-const PHONE_RE = /^\d{10,15}$/;
-
-function resolveConfiguredPhone(argv = process.argv, env = process.env) {
-  // 1) CLI override  --phone=…  /  --number=…
-  const cli = argv.find(
-    a => a.startsWith('--phone=') || a.startsWith('--number=')
-  );
-  if (cli) {
-    const digits = cli.split('=')[1].replace(/\D/g, '');
-    if (PHONE_RE.test(digits)) return digits;
-    console.warn(
-      clock(),
-      red(`ignoring invalid --phone value: ${cli.split('=')[1]}`)
-    );
-  }
-
-  // 2) Hardcoded Pairing_Number (takes priority over env).
-  //    Sanitize: strip +, spaces, dashes, and coerce to string so
-  //    '+92 300 1234567' / 923001234567 (number) both work.
-  if (Pairing_Number !== '' && Pairing_Number != null) {
-    const digits = String(Pairing_Number).replace(/\D/g, '');
-    if (PHONE_RE.test(digits)) {
-      return digits;
-    }
-    console.warn(
-      clock(),
-      red(
-        `ignoring invalid Pairing_Number "${Pairing_Number}" — must be 10–15 digits`
-      )
-    );
-  }
-
-  // 3) Env fallback:  WRAITH_PHONE / WRAITH_NUMBER
-  const fromEnv = (env.WRAITH_PHONE || env.WRAITH_NUMBER || '').replace(
-    /\D/g,
-    ''
-  );
-  if (PHONE_RE.test(fromEnv)) return fromEnv;
-
-  // 4) Nothing configured → wizard will prompt
-  return null;
-}
-
-const CONFIGURED_PHONE = resolveConfiguredPhone();
-
-// ─────────────────────────────────────────────
-// DEBUG — one-line confirmation of what was resolved.
-// Remove once pairing works if you prefer silence.
-// ─────────────────────────────────────────────
-say(
-  grey(
-    `[config] Pairing_Number="${Pairing_Number}" · ` +
-      `CONFIGURED_PHONE=${CONFIGURED_PHONE ?? 'null'} · ` +
-      `TTY=${process.stdin.isTTY}`
-  )
-);
-
-// ─────────────────────────────────────────────
-// 6. Repo / instance helpers
-// ─────────────────────────────────────────────
-function repoRoot() {
-  if (fs.existsSync(path.join(__dirname, 'start.js'))) return __dirname;
-
-  const dir = path.join(__dirname, 'wraith');
-  if (!fs.existsSync(path.join(dir, 'start.js'))) {
-    say(yellow('fetching al-jin from origin…'));
-    const res = spawnSync(
-      'git',
-      ['clone', '--depth', '1', '-b', BRANCH, SOURCE, dir],
-      { stdio: 'inherit', timeout: CLONE_TIMEOUT }
-    );
-    if (res.status !== 0) {
-      throw new Error('git clone failed – check network or repository access');
-    }
-  }
-  return dir;
-}
-
-function installDeps(dir) {
-  say(yellow('installing dependencies…'));
-  const res = spawnSync('npm', ['install', '--omit=dev'], {
-    cwd: dir,
-    stdio: 'inherit',
-    timeout: INSTALL_TIMEOUT,
-  });
-  if (res.status !== 0) {
-    throw new Error('npm install failed – see output above');
-  }
-  say(green('✓ dependencies locked in'));
-}
-
-const instDir = (root, id) => path.join(root, 'instances', id);
-
-function makeInstance(root, id) {
-  const dir = instDir(root, id);
-  for (const name of ['session', 'state', 'logs', 'data']) {
-    fs.mkdirSync(path.join(dir, name), { recursive: true });
-  }
-  return dir;
-}
-
-function migrateLegacy(root) {
-  const main = instDir(root, 'main');
-  for (const name of ['session', 'state', 'vault']) {
-    const src = path.join(root, name);
-    const dst = path.join(main, name);
-    if (fs.existsSync(src) && !fs.existsSync(dst)) {
-      say(yellow(`migrating legacy /${name} → instances/main/${name}`));
-      try {
-        fs.cpSync(src, dst, { recursive: true, force: false });
-      } catch (e) {
-        say(red(`migration warning: ${e.message}`));
-      }
-    }
-  }
-
-  // Auto-import root creds.json if uploaded directly to VPS
-  const rootCreds = path.join(root, 'creds.json');
-  const mainCreds = path.join(main, 'session', 'creds.json');
-  if (fs.existsSync(rootCreds) && !fs.existsSync(mainCreds)) {
-    say(green('found root creds.json — auto-moving to instances/main/session/creds.json'));
-    try {
-      fs.mkdirSync(path.join(main, 'session'), { recursive: true });
-      fs.renameSync(rootCreds, mainCreds);
-    } catch (e) {
-      try {
-        fs.copyFileSync(rootCreds, mainCreds);
-        fs.unlinkSync(rootCreds);
-      } catch (err) {
-        say(red(`auto-creds migration warning: ${err.message}`));
-      }
-    }
-  }
-}
-
-const isLinked = (root, id) =>
-  fs.existsSync(path.join(root, 'instances', id, 'session', 'creds.json'));
-
-function listExistingInstances(root) {
-  const dir = path.join(root, 'instances');
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter(n => {
-      try {
-        return fs.statSync(path.join(dir, n)).isDirectory();
-      } catch {
-        return false;
-      }
-    })
-    .filter(n => isLinked(root, n))
-    .sort();
-}
-
-function nextSessionId(root) {
-  const dir = path.join(root, 'instances');
-  if (!fs.existsSync(dir)) return 'main';
-
-  const used = fs.readdirSync(dir).filter(n => {
-    try {
-      return fs.statSync(path.join(dir, n)).isDirectory() && isLinked(root, n);
-    } catch {
-      return false;
-    }
-  });
-
-  if (used.length === 0 || !used.includes('main')) return 'main';
-  let maxN = 1;
-  for (const id of used) {
-    const m = /^sess(\d+)$/.exec(id);
-    if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
-  }
-  return `sess${maxN + 1}`;
-}
-
-// ─────────────────────────────────────────────
-// 7. Session spawning
-// ─────────────────────────────────────────────
-const children = new Map();
-const restartingSessions = new Set();
-let shuttingDown = false;
-let rl = null;
-
-const ask = q => new Promise(res => rl.question(q, a => res(a.trim())));
-
-// ─────────────────────────────────────────────
-// Prompt for a WhatsApp number.
-// If CONFIGURED_PHONE is set, auto-fallback to it
-// after PROMPT_TIMEOUT_MS of no input.
-// ─────────────────────────────────────────────
-async function promptNumber(label = 'number') {
-  console.log();
-  console.log(violet(` ╭─ link a ${label} ─────────────────────╮`));
-  console.log(violet(' │') + ' WhatsApp number, digits only ' + violet('│'));
-  console.log(
-    violet(' │') +
-      grey(' country code + number · 923001234567 ') +
-      violet('│')
-  );
-  if (CONFIGURED_PHONE) {
-    console.log(
-      violet(' │') +
-        yellow(
-          ` ⏱ no input in ${PROMPT_TIMEOUT_MS / 1000}s → +${CONFIGURED_PHONE} `
-        ) +
-        violet('│')
-    );
-  }
-  console.log(violet(' ╰────────────────────────────────────────╯'));
-
-  return new Promise(resolve => {
-    let settled = false;
-    let timer = null;
-
-    const finish = num => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve(num);
-    };
-
-    if (CONFIGURED_PHONE) {
-      timer = setTimeout(() => {
-        if (settled) return;
-        process.stdout.write('\n');
-        say(
-          yellow(
-            `⏱ no input in ${PROMPT_TIMEOUT_MS / 1000}s — auto-pairing +${CONFIGURED_PHONE}`
-          )
-        );
-        finish(CONFIGURED_PHONE);
-      }, PROMPT_TIMEOUT_MS);
-    }
-
-    (async () => {
-      while (!settled) {
-        let raw;
-        try {
-          raw = await ask(violet(' ❯ ') + cyan(`${label}: `));
-        } catch {
-          if (CONFIGURED_PHONE) finish(CONFIGURED_PHONE);
-          return;
-        }
-        if (settled) return;
-
-        const digits = raw.replace(/\D/g, '');
-        if (!/^\d{10,15}$/.test(digits)) {
-          console.log(red(' ✖ must be 10–15 digits'));
-          continue;
-        }
-        finish(digits);
-        return;
-      }
-    })();
-  });
-}
-
-function spawnSession(root, id, number) {
-  const dir = makeInstance(root, id);
-  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || '256';
-  const args = [
-    `--max-old-space-size=${maxOldSpace}`,
-    '--max-semi-space-size=16',
-    '--expose-gc',
-  ];
-  if (process.env.WRAITH_V8_POOL_SIZE) {
-    args.push(`--v8-pool-size=${process.env.WRAITH_V8_POOL_SIZE}`);
-  }
-  args.push(path.join(root, 'start.js'), '--session', id);
-  if (number) args.push('--number', number);
-
-  const env = {
-    ...process.env,
-    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '2',
-    WRAITH_REPO_ROOT: root,
-    WRAITH_SESSION_ID: id,
-    WRAITH_DATA_DIR: dir,
-  };
-
-  say(cyan(`starting session ${id}${number ? ' · +' + number : ''}`));
-  const proc = spawn('node', args, {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    env,
-  });
-
-  let muted = false;
-  const backlog = [];
-  const route = (stream, dest) => {
-    stream.on('data', chunk => {
-      if (muted) backlog.push([dest, chunk]);
-      else dest.write(chunk);
-    });
-  };
-  route(proc.stdout, process.stdout);
-  route(proc.stderr, process.stderr);
-
-  let resolveLinked, resolveExit;
-  const linkedPromise = new Promise(r => (resolveLinked = r));
-  const exitPromise = new Promise(r => (resolveExit = r));
-
-  const rec = {
-    number,
-    proc,
-    restarts: 0,
-    resetTimer: null,
-    resolveLinked,
-    resolveExit,
-    mute: () => {
-      muted = true;
-    },
-    unmute: () => {
-      muted = false;
-      for (const [dest, chunk] of backlog) dest.write(chunk);
-      backlog.length = 0;
-    },
-  };
-  children.set(id, rec);
-
-  proc.on('message', m => {
-    if (m?.type === 'wraith:linked') {
-      try {
-        resolveLinked(true);
-      } catch {}
-    }
-    if (m?.type === 'wraith:spawn_session' && m.sessionId) {
-      if (children.has(m.sessionId)) {
-        say(yellow(`session ${m.sessionId} is already running`));
-      } else {
-        say(
-          green(
-            `dynamic spawn request received for session ${m.sessionId}${
-              m.number ? ' (+' + m.number + ')' : ''
-            }`
-          )
-        );
-        spawnSession(root, m.sessionId, m.number || null);
-      }
-    }
-    if (m?.type === 'wraith:restart_all') {
-      say(
-        cyan(
-          `multi-session update requested by ${id} — restarting all other sessions`
-        )
-      );
-      for (const [otherId, otherRec] of children.entries()) {
-        if (otherId !== id) {
-          restartingSessions.add(otherId);
-          try {
-            otherRec.proc.kill('SIGTERM');
-          } catch {}
-        }
-      }
-    }
-    if (m?.type === 'wraith:delete_session' && m.sessionId) {
-      const targetId = m.sessionId;
-      say(yellow(`delete session request received for ${targetId}`));
-      if (children.has(targetId)) {
-        const targetRec = children.get(targetId);
-        try {
-          targetRec.proc.kill('SIGTERM');
-        } catch {}
-        children.delete(targetId);
-      }
-      const targetDir = instDir(root, targetId);
-      setTimeout(() => {
-        try {
-          fs.rmSync(targetDir, { recursive: true, force: true });
-          say(green(`deleted session instance directory: ${targetId}`));
-        } catch (e) {
-          say(red(`failed to remove directory for ${targetId}: ${e.message}`));
-        }
-      }, 1500);
-    }
-  });
-
-  proc.on('error', err =>
-    console.error(clock(), red('spawn error:'), err.message)
-  );
-
-  proc.on('exit', (code, signal) => {
-    children.delete(id);
-    try {
-      resolveExit({ code, signal });
-    } catch {}
-
-    if (shuttingDown) return;
-
-    if (restartingSessions.has(id)) {
-      restartingSessions.delete(id);
-      say(cyan(`restarting session ${id} for update…`));
-      setTimeout(() => {
-        if (!shuttingDown) spawnSession(root, id, rec.number);
-      }, 1000);
-      return;
-    }
-
-    if (signal === 'SIGINT' || signal === 'SIGTERM') return;
-
-    rec.restarts++;
-    if (rec.restarts > MAX_RESTARTS) {
-      say(red(`${id}: exceeded max restarts (${MAX_RESTARTS}) — giving up`));
-      return;
-    }
-
-    const wait = Math.min(1500 * Math.pow(2, rec.restarts - 1), 30_000);
-    const exitDetail =
-      code !== null
-        ? `code ${code}`
-        : signal
-        ? `signal ${signal}`
-        : 'code null';
-    const why =
-      code === 0
-        ? 'restarting for update/clean exit'
-        : `crashed (${exitDetail})`;
-    say(
-      yellow(
-        `${id}: ${why} · retry ${rec.restarts} in ${(wait / 1000).toFixed(1)}s`
-      )
-    );
-
-    setTimeout(() => {
-      if (!shuttingDown) spawnSession(root, id, rec.number);
-    }, wait);
-  });
-
-  clearTimeout(rec.resetTimer);
-  rec.resetTimer = setTimeout(() => {
-    rec.restarts = 0;
-  }, 20_000);
-
-  return { proc, linkedPromise, exitPromise };
-}
-
-async function waitForLink(spawnResult, id) {
-  return Promise.race([
-    spawnResult.linkedPromise.then(() => 'linked'),
-    spawnResult.exitPromise.then(({ code }) => {
-      if (code === 0) return 'exited';
-      throw new Error(`session ${id} exited early with code ${code}`);
-    }),
-    new Promise((_, rej) =>
-      setTimeout(
-        () =>
-          rej(
-            new Error(
-              `session ${id} link timeout after ${LINK_WAIT_MS / 1000}s`
-            )
-          ),
-        LINK_WAIT_MS
-      )
-    ),
-  ]);
-}
-
-function muteAll() {
-  for (const rec of children.values()) rec.mute?.();
-}
-function unmuteAll() {
-  for (const rec of children.values()) rec.unmute?.();
-}
-
-async function linkOne(root, label, presetNumber = null) {
-  let number = presetNumber;
-
-  if (number) {
-    say(cyan(`using configured number +${number}`));
-  } else if (!process.stdin.isTTY || !rl) {
-    throw new Error(
-      'no phone number available — set Pairing_Number, WRAITH_PHONE env, or pass --phone=923001234567'
-    );
-  } else {
-    number = await promptNumber(label);
-  }
-
-  const id = nextSessionId(root);
-  say(grey(`spawning session ${id} for +${number} — waiting for pairing code…`));
-
-  const result = spawnSession(root, id, number);
-  try {
-    await waitForLink(result, id);
-    console.log(green(`\n ✔ ${id} linked (+${number})`));
-    return true;
-  } catch (e) {
-    console.error(red(` ✖ ${e.message}`));
-    return false;
-  }
-}
-
-async function wizard(root) {
-  console.log();
-  console.log(violet(' ╭───────────────────────────────────────╮'));
-  console.log(violet(' │') + ' Al-Jin · pairing wizard ' + violet('│'));
-  console.log(violet(' ╰───────────────────────────────────────╯'));
-
-  const firstLabel = ADD_MODE ? 'new number' : 'first number';
-
-  // If Pairing_Number (or CLI/env) is set, linkOne uses it directly
-  // and the interactive prompt is skipped.
-  const ok1 = await linkOne(root, firstLabel, CONFIGURED_PHONE);
-  if (!ok1) {
-    say(red('first number failed — aborting wizard'));
-    return;
-  }
-
-  while (true) {
-    if (!process.stdin.isTTY) {
-      console.log(grey(' non-interactive — running linked session(s).\n'));
-      break;
-    }
-    muteAll();
-    await new Promise(r => setTimeout(r, 250));
-    process.stdout.write('\n');
-    const ans = await ask(
-      violet(' ❯ ') + 'link another number? ' + grey('[y/N]: ')
-    );
-    unmuteAll();
-    if (!/^y(es)?$/i.test(ans)) {
-      console.log(grey(' done — running linked session(s).\n'));
-      break;
-    }
-    // Subsequent numbers always prompt (no preset) — Pairing_Number
-    // applies only to the first/primary session.
-    const ok = await linkOne(root, 'next number');
-    if (!ok) {
-      console.log(grey(' aborting further links.\n'));
-      break;
-    }
-  }
-}
-
-function quiet(sig) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  say(grey(`${sig} received — shutting down all sessions`));
-  for (const { proc } of children.values()) {
-    try {
-      proc.kill('SIGTERM');
-    } catch {}
-  }
-  setTimeout(() => process.exit(0), 800);
-}
-
-process.on('SIGINT', () => quiet('SIGINT'));
-process.on('SIGTERM', () => quiet('SIGTERM'));
-
-// ─────────────────────────────────────────────
-// 8. Main entry
-// ─────────────────────────────────────────────
-(async () => {
-  try {
-    veil();
-    const root = repoRoot();
-    if (!fs.existsSync(path.join(root, 'node_modules'))) installDeps(root);
-    makeInstance(root, 'main');
-    migrateLegacy(root);
-
-    const existing = listExistingInstances(root);
-
-    // ── non-interactive (Pterodactyl, PM2, systemd, docker) ──
-    if (!process.stdin.isTTY) {
-      if (existing.length) {
-        say(
-          grey(
-            `[non-interactive] resuming ${existing.length} session(s): ${existing.join(
-              ', '
-            )}`
-          )
-        );
-        for (const id of existing) spawnSession(root, id, null);
-        return;
-      }
-
-      if (CONFIGURED_PHONE) {
-        say(
-          grey(
-            `[non-interactive] no sessions found — auto-pairing +${CONFIGURED_PHONE}`
-          )
-        );
-        try {
-          const ok = await linkOne(root, 'auto', CONFIGURED_PHONE);
-          if (!ok) process.exit(0);
-        } catch (e) {
-          console.error(red(`auto-pair failed: ${e.message}`));
-          process.exit(0);
-        }
-        return;
-      }
-
-      say(
-        red(
-          '[non-interactive] no linked sessions and no Pairing_Number / WRAITH_PHONE set'
-        )
-      );
-      say(
-        grey(
-          '  → set Pairing_Number = "923001234567" in index.js, or WRAITH_PHONE=923001234567 in env, or run once interactively'
-        )
-      );
-      process.exit(0);
-    }
-
-    // ── interactive TTY ──
-    rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    if (ADD_MODE) {
-      for (const id of existing) spawnSession(root, id, null);
-      await wizard(root);
-      return;
-    }
-
-    if (existing.length) {
-      say(grey(`resuming ${existing.length} session(s): ${existing.join(', ')}`));
-      for (const id of existing) spawnSession(root, id, null);
-      return;
-    }
-
-    await wizard(root);
-  } catch (err) {
-    console.error(red('FATAL:'), err.message);
-    process.exit(1);
-  }
-})();
+### Docker
+```bash
+docker build -t al-jin-lite .
+docker run -d --name al-jin-lite \
+  -v $(pwd)/session:/app/session \
+  -v $(pwd)/state:/app/state \
+  --memory=256m \
+  al-jin-lite
 ```
-## What is stored
-| Kept | Gone |
+The image defaults to a 200MB V8 heap so it fits inside a 256MB container with headroom for Node's own baseline. One session per container is the Docker pattern — run another container for a second number.
+
+### Procfile (Railway / Render / Koyeb / Heroku-style platforms)
+A `Procfile` (`worker: node index.js`) is included — most platforms detect it automatically.
+
+Node ≥ 20 is required everywhere.
+
+---
+
+## Dependencies (9, no new ones added by this update)
+`@whiskeysockets/baileys`, `@hapi/boom`, `@cacheable/node-cache`, `@postfetch/core`, `awesome-phonenumber`, `dotenv`, `p-queue`, `pino`, **`sharp`** (the only image library — no jimp, no canvas).
+
+---
+
+## Resource tuning (built for small VPS boxes)
+
+### Multi-session RAM budget
+`index.js` (the multi-session launcher) splits your total RAM budget across every session it spawns, instead of giving each one the full heap size:
+
+```bash
+# .env or environment
+WRAITH_RAM_BUDGET_MB=220     # total RAM the bot may use (default 256 box → leave ~36MB for the OS)
+```
+One session gets ~180MB of heap; two sessions get ~90MB each; three get ~60MB each, automatically. Override a single session's heap with `WRAITH_MAX_OLD_SPACE_SIZE` if you need an exact number instead.
+
+### Live commands (owner only)
+| Command | Does |
 |---|---|
-| `session/` (login) | media vault, status store, pps sync |
-| `state/*.json` (settings, tiny text ledger) | `msgstore.json` (message cache is RAM-only now) |
-| `logs/` — text log of every message | media files in logs |
+| `.cpulimit 0.30` / `.cpulimit auto` / `.cpulimit off` | Cap the bot's CPU use (cores, %, or auto from the server's cgroup quota) |
+| `.ramlimit 512` / `.ramlimit 512 restart` | RAM ceiling in MB, optionally auto-restart if stuck over it |
+| `.disk` | Free space, temp-folder location, and per-send disk reservation |
+| `.disk reserve 100` / `.disk limit 3gb` | Always keep this much free / cap one send's disk use |
+| `.dlcap 300mb` | Cap the size of one download |
 
-## Anti-delete without storage — `.ghost`
-Every incoming media (chats, groups, statuses, view-once) is **relayed by reference** to a *destination chat* the moment it arrives. The bot never downloads it, never buffers it, never writes it. When someone deletes it, you get a text alert with who / when / what and **where + at what time the copy was saved**.
+These are zero extra dependencies — pure Node + `/proc`/cgroup reads.
 
-| Command | Meaning |
+---
+
+## Stealth mode (default)
+
+Lite stays invisible unless you turn something on:
+
+| Behaviour | Default |
 |---|---|
-| `.ghost` | status |
-| `.ghost on/off` · `.ghost edit on/off` | anti-delete · anti-edit |
-| `.ghost relay on/off` | media relay on/off |
-| `.ghost status on/off` | relay status stories |
-| `.ghost labels on/off` | caption line after every relayed media (view-once always gets one) |
-| `.ghost dest <number\|here\|me>` / `.setdest <number>` | destination (default: the bot's own chat) |
-| `.ghost mode all\|selected` | all chats (default) or only chats switched on |
-| `.ghost chat on/off [number]` · `.ghost chats` | per-chat switch / list |
+| Shows "online" | ❌ off |
+| Marks statuses as seen | ❌ off (`.lurk on` to enable) |
+| Reacts to statuses | ❌ off (`.lurk react on` to enable) |
+| Blue ticks / read receipts | ❌ off |
+| Auto typing / recording indicator | ❌ off |
+| Auto-react in every chat (`.reactall`) | ❌ off, owner-controlled |
+| Saves statuses silently (no "seen" sent) | ✅ on |
 
-Env tuning: `ALJIN_RELAY_GAP_MS` (default 350, pause between relays), `ALJIN_RELAY_MAX_MB` (default 150).
+---
 
-## Downloads (all streamed: network → WhatsApp, nothing on disk)
-`.play` `.ytv/.video` `.ytdl` `.yt` `.mp3` (YouTube via ESM) · `.dl` `.pdl` `.ig` `.tiktok` `.fb` `.tw` `.reddit` `.threads` `.pin` (postfetch / ESM) · `.jindl` `.jinvideo` `.jinapk` `.apk`
+## New in this update
 
-## Images (sharp)
-`.sticker/.s` (images) · `.toimg` · `.take` · `.stickercrop` · `.circle` · `.blur` · `.greyscale` · `.pixelate` · `.hd/.enhance` · `.sanitize` · `.hddp` · `.fulldp` · `.setpp` · `.setgpp` · Ephoto360 text effects (plain `fetch`)
+- **CPU/RAM governor** (`.cpulimit`, `.ramlimit`) + **disk guard** (`.disk`, `.dlcap`) — ported from the main bot, zero new dependencies.
+- **Multi-session RAM auto-split** in `index.js` — see [Resource tuning](#resource-tuning-built-for-small-vps-boxes) above.
+- **Group guard pack**: `.muteuser`, `.unmuteuser`, `.mutelist`, `.mutesticker`, `.unmutesticker`, `.antiforward`, `.dnd` — admin-level, no extra dependency.
+- **`.reactall`** — owner-controlled auto-react in every chat, off by default (stealthy).
+- **`.fixkeys`** — fixes "Waiting for this message" on your own phone by dropping stale signal sessions, without re-pairing.
+- **Stealth-by-default fix**: status auto-view/auto-react now default to **off** (previously on), matching the main bot's documented stealth mode.
+- **One-click deploy**: `aljin.sh`, `Procfile`, tuned `Dockerfile`/`ecosystem.config.cjs` for a 256MB/512MB box.
+- Lazy-loaded command modules (already in place) keep cold-start RAM low; nothing here removes that.
 
-## Removed (needed ffmpeg / heavy libs)
-video/GIF stickers, `.tovid`, `.trim .tomp3 .vn .compress .8d .bassboost .robot .vocal .waveform`, `.speed .treble .reverse .pitch .avm .attp`, `.tts`, `.ocr`, `.barcode`, `.ppt`, `.pdf`, `.book`, `.web2img`, `.igzip`, `.pdlzip`, `.ytcookies`, button/reply-mode UI (plain text now).
+See `FIX-NOTES.md` for the full file-level changelog.
 
-## Security
-`lib/esm-secrets.js` contains hard-coded ESM credentials and `.env` / `keys.env` hold your keys — rotate them and never publish this folder.
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in what you need — everything has a sane default. Key knobs:
+
+```bash
+WRAITH_PHONE=                  # your number, or leave empty to be asked
+WRAITH_RAM_BUDGET_MB=220       # total RAM across all sessions (see Resource tuning)
+WRAITH_MSG_STORE_MAX=400       # in-RAM retry cache size
+WRAITH_LOG_LEVEL=silent        # warn/error/info/debug while diagnosing
+```
+
+---
+
+## Support & links
+
+- Full-feature bot: https://github.com/themalik-g/al-jin-whatsapp-bot
+- Issues / questions: open an issue on this repo, or see the main bot's [docs](https://github.com/themalik-g/al-jin-whatsapp-bot/tree/main/docs) — most of it (stealth, JID system, deployment) applies to Lite too.
+
+License: MIT

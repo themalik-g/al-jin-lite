@@ -46,8 +46,10 @@ import { startScheduler, stopScheduler } from './modules/schedule.js';
 import { startPresenceHeartbeat, stopPresenceHeartbeat } from './modules/presence.js';
 import { revealDelete } from './modules/ghost.js';
 import { sessionPath, statePath, inState } from './core/paths.js';
+import { getWaVersion } from './core/shared.js';
 import { loadVars } from './core/vars.js';
 import { newsletterContext } from './lib/buttons.js';
+import { repairIfRequested } from './core/session-repair.js';
 
 // ── CLI Arg Parsing ──
 const argv = process.argv.slice(2);
@@ -230,6 +232,7 @@ async function handleStartupTasks(sock) {
   }
 }
 
+let retiring = false; // set while this session is being deleted (.delsession)
 let isStarting = false;
 let currentSock = null;
 let reconnectAttempts = 0;
@@ -249,11 +252,13 @@ function teardownSock() {
 }
 
 async function ignite() {
-  if (isStarting) return;
+  if (isStarting || retiring) return;
   isStarting = true;
 
+  // .fixkeys / repair-sessions.flag → drop stale signal sessions BEFORE Baileys loads the keys
+  repairIfRequested(AUTH_DIR, STATE_DIR, (m) => console.log(tag, yellow(m)));
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
+  const version = await getWaVersion(fetchLatestBaileysVersion); // fetched once for ALL sessions
 
   const sock = makeWASocket({
     version,
@@ -333,6 +338,7 @@ async function ignite() {
 
   sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect, qr } = u;
+    if (retiring) return;
 
     if (qr && !sock.authState.creds.registered && !pairingRequested) {
       pairingRequested = true;
@@ -510,6 +516,24 @@ function quiet(sig) {
   teardownSock();
   setTimeout(() => process.exit(0), 400);
 }
+// Launcher → session messages
+process.on('message', async (m) => {
+  if (m?.type === 'wraith:sessions') {
+    process.env.WRAITH_ACTIVE_SESSIONS = String(Math.max(1, Number(m.count) || 1));
+  }
+  if (m?.type === 'wraith:logout_and_exit') {
+    retiring = true; // stops the reconnect / re-pair logic
+    console.log(tag, yellow('session removal requested · unlinking this device'));
+    try { await Promise.race([currentSock?.logout?.(), delay(5000)]); } catch {}
+    teardownSock();
+    setTimeout(() => process.exit(0), 200);
+  }
+});
+// Shared settings: apply .cpulimit/.ramlimit changes made by another session
+import('./core/limiter.js')
+  .then((l) => { if (l.syncSharedLimits) setInterval(l.syncSharedLimits, 20000).unref?.(); })
+  .catch(() => {});
+
 process.on('SIGINT',  () => quiet('SIGINT'));
 process.on('SIGTERM', () => quiet('SIGTERM'));
 

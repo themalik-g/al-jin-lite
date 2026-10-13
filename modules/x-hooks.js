@@ -9,6 +9,8 @@
 //  member hook  : antifake · "who left" log
 // ─────────────────────────────────────────────
 import { store, isGroup, senderIds, isOwnerMsg, prefix, isSenderAdmin, isBotAdmin, tag, duration, contextOf, unwrap, pick } from '../lib/x.js';
+import { guardMessage } from './x-guard.js';
+import { globalReact } from './x-react.js';
 
 export const groupCfg = () => store('group', {});
 export const globalCfg = () => {
@@ -73,6 +75,9 @@ export async function onMessage(sock, chat, msg, text) {
     if (!msg?.message || chat === 'status@broadcast') return false;
     const fromMe = !!msg.key.fromMe;
     const g = globalCfg().data;
+
+    // owner-controlled auto-react for every chat (off by default; never blocks the message)
+    globalReact(sock, chat, msg, text).catch(() => {});
     const ids = senderIds(msg);
 
     // bot-level ban → ignore commands only (chat stays readable)
@@ -106,6 +111,9 @@ export async function onMessage(sock, chat, msg, text) {
         row.n++; row.last = Date.now();
         st.save();
     }
+
+    // guard: muted users · banned stickers · antiforward · dnd (modules/x-guard.js)
+    try { if (await guardMessage(sock, chat, msg, text)) return true; } catch (e) { console.error('[x-guard]', e?.message); }
 
     // afk: owner of the status returns / someone pings an afk user
     {

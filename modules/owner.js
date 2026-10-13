@@ -8,6 +8,8 @@ import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { isOwner, isPrimaryOwner, addSecondaryOwner, delSecondaryOwner, getOwnerDetails, registerOwnerLid } from '../core/identity.js';
 import { getBestUserJid } from '../core/jid-resolver.js';
 import { readJson } from '../core/state-io.js';
+import { inState, statePath } from '../core/paths.js';
+import { getWaVersion } from '../core/shared.js';
 import { CONFIG } from '../config.js';
 import { getVar, setVar, delVar, getAllVars } from '../core/vars.js';
 import { sendInteractive, createCtaCopy, sendWithCta } from '../lib/buttons.js';
@@ -78,9 +80,11 @@ export async function delsessionCommand(sock, chat, msg, args) {
     if (!targetId) {
         return sendWithCta(sock, chat, '❌ Usage: `.delsession <session_id>`\nExample: `.delsession sess2`', { quoted: msg });
     }
-
     if (targetId === 'main') {
         return sock.sendMessage(chat, { text: '❌ Cannot delete the main session.' }, { quoted: msg });
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/.test(targetId)) {
+        return sock.sendMessage(chat, { text: '❌ Invalid session id.' }, { quoted: msg });
     }
 
     const repoRoot = process.env.WRAITH_REPO_ROOT || process.cwd();
@@ -91,14 +95,11 @@ export async function delsessionCommand(sock, chat, msg, args) {
     }
 
     if (typeof process.send === 'function') {
-        process.send({
-            type: 'wraith:delete_session',
-            sessionId: targetId
-        });
-        await sock.sendMessage(chat, { text: `✅ Signaled launcher to stop process and delete instance folder for session \`${targetId}\`.` }, { quoted: msg });
+        process.send({ type: 'wraith:delete_session', sessionId: targetId });
+        await sock.sendMessage(chat, { text: `🗑️ Removing session \`${targetId}\`: unlinking its device, stopping it, then deleting its folder. It will not restart.` }, { quoted: msg });
     } else {
         try {
-            fs.rmSync(targetDir, { recursive: true, force: true });
+            fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
             await sock.sendMessage(chat, { text: `✅ Deleted instance folder for session \`${targetId}\`.` }, { quoted: msg });
         } catch (e) {
             await sock.sendMessage(chat, { text: `⚠️ Failed to delete session folder: ${e.message}` }, { quoted: msg });
@@ -328,7 +329,7 @@ export async function getpairCommand(sock, chat, msg, args) {
         return sendWithCta(sock, chat, '❌ Usage: `.getpair <phone_number>`\nExample: `.getpair 923001234567`', { quoted: msg });
     }
 
-    const tempDir = path.join(process.cwd(), 'state', 'temp-pair-' + Date.now().toString(36));
+    const tempDir = path.join(statePath(), 'temp-pair-' + Date.now().toString(36));
     fs.mkdirSync(tempDir, { recursive: true });
 
     let tempSock = null;
@@ -380,7 +381,7 @@ export async function getpairCommand(sock, chat, msg, args) {
             if (isCleanedUp) return;
 
             const { state, saveCreds } = await useMultiFileAuthState(tempDir);
-            const { version } = await fetchLatestBaileysVersion();
+            const version = await getWaVersion(fetchLatestBaileysVersion);
 
             tempSock = makeWASocket({
                 version,
@@ -734,7 +735,7 @@ export async function chatstatsCommand(sock, chat, msg, args) {
         if (!digits) {
             return sendWithCta(sock, chat, '📊 *chatstats*\n\nUsage: `.chatstats <number>`\nShows aggregated activity for that contact across every chat the bot has seen.', { quoted: msg });
         }
-        const activity = readJson(path.join(process.cwd(), 'state', 'activity.json'), {});
+        const activity = readJson(inState('activity.json'), {});
         let total = 0, firstSeen = 0, lastActive = 0;
         const groupBreakdown = [];
         for (const [jid, rec] of Object.entries(activity)) {
