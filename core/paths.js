@@ -23,3 +23,19 @@ export const logsPath      = () => sub('logs');
 export const inState = (...n) => path.join(statePath(), ...n);
 export const inStore = (...n) => path.join(storePath(), ...n);
 export const inData  = (...n) => path.join(storePath(), ...n);
+
+// ── Shared (cross-session) data ─────────────────────────────────────────────
+// instances/_shared  — one folder every session process reads/writes (API keys, settings,
+// channel cache, WhatsApp-web version, compile cache). Launcher exports WRAITH_SHARED_DIR.
+export function sharedPath() {
+  const env = process.env.WRAITH_SHARED_DIR;
+  const dd = dataDir();
+  const d = env
+    ? path.resolve(env)
+    : (path.basename(path.dirname(dd)) === 'instances'
+        ? path.join(path.dirname(dd), '_shared')
+        : path.join(dd, '_shared'));
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+export const inShared = (...n) => path.join(sharedPath(), ...n);

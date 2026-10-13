@@ -14,6 +14,7 @@ import { CONFIG } from './config.js';
 import { reqlocationCommand, handleIncomingLocation } from './modules/location.js';
 import { WAMessageStubType } from '@whiskeysockets/baileys';
 import { extractInteractiveResponse, matchChoice } from './lib/buttons.js';
+import { gate as limiterGate } from './core/limiter.js';
 // extras pack (modules/x-*.js)
 import { onMessage as xOnMessage, resolveAlias as xResolveAlias } from './modules/x-hooks.js';
 import { hasExtra as xHasExtra, runExtra as xRunExtra } from './modules/x-registry.js';
@@ -45,6 +46,10 @@ const gpuCommand      = lazy('./modules/ping.js', 'gpuCommand');
 const ramCommand      = lazy('./modules/ping.js', 'ramCommand');
 const romCommand      = lazy('./modules/ping.js', 'romCommand');
 const restartCommand  = lazy('./modules/ping.js', 'restartCommand');
+const diskCommand      = lazy('./modules/disk.js', 'diskCommand');
+const cpulimitCommand  = lazy('./modules/limits.js', 'cpulimitCommand');
+const ramlimitCommand  = lazy('./modules/limits.js', 'ramlimitCommand');
+const dlcapCommand     = lazy('./modules/dlcap.js', 'dlcapCommand');
 const helpCommand     = lazy('./modules/help.js', 'helpCommand');
 const imenuCommand    = lazy('./modules/help.js', 'imenuCommand');
 const getppCommand    = lazy('./modules/profile.js', 'getppCommand');
@@ -267,7 +272,11 @@ const CRITICAL_COMMANDS = new Set([
   'addowner', 'delowner', 'ownerlist',
   'restart', 'pinchat', 'unpinchat', 'pdd',
   'cpu', 'gpu', 'ram', 'rom', 'imenu',
+  'disk', 'cpulimit', 'ramlimit', 'dlcap',
 ]);
+
+// Commands exempt from the CPU/RAM wait-gate (so .cpulimit/.ramlimit/.ping never block on themselves)
+const LIMITER_EXEMPT = new Set(['cpulimit', 'ramlimit', 'cpu', 'gpu', 'ram', 'rom', 'ping', 'alive', 'uptime', 'restart', 'replymode', 'imenu', 'disk']);
 
 const attachedSockets = new WeakSet();
 
@@ -509,6 +518,9 @@ export async function dispatch(sock, update, sessionId = 'main') {
 
       const csock = sock;
 
+      // CPU / RAM limits (.cpulimit / .ramlimit): wait here while the bot is over budget.
+      if (!LIMITER_EXEMPT.has(verb)) { try { await limiterGate(); } catch {} }
+
       if (EPHOTO_LIST.includes(verb) && verb !== 'textmaker') {
         await handleTextmakerCommand(csock, chat, msg, verb, rest);
         continue;
@@ -579,6 +591,10 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'ram': await ramCommand(csock, chat, msg); break;
           case 'rom': await romCommand(csock, chat, msg); break;
           case 'restart': await restartCommand(csock, chat, msg); break;
+          case 'disk': await diskCommand(csock, chat, msg, rest); break;
+          case 'cpulimit': await cpulimitCommand(csock, chat, msg, rest); break;
+          case 'ramlimit': await ramlimitCommand(csock, chat, msg, rest); break;
+          case 'dlcap': await dlcapCommand(csock, chat, msg, rest); break;
           case 'reset': {
             const target = (rest[0] || '').toLowerCase();
             if (target === 'wp' || target === 'wallpaper') await wpCommand(csock, chat, msg, rest, 'reset');

@@ -1,34 +1,29 @@
-// core/settings.js — persistent JSON-backed settings store
-import fs from 'node:fs';
+// core/settings.js — settings SHARED by every session (prefix, reply mode, CPU/RAM/disk/download limits…)
+// One file in instances/_shared; a change made in any session is picked up by all of them.
+// An old per-session settings.json is merged in once (shared values win), then renamed *.migrated.
 import path from 'node:path';
 import { storePath } from './paths.js';
-
-const FILE = () => path.join(storePath(), 'settings.json');
+import { sharedJson, migrateLocal } from './shared.js';
 
 const DEFAULTS = {
   prefix: '.',
 };
 
-let _cache = null;
+const store = sharedJson('settings.json');
+let migrated = false;
 
 function load() {
-  if (_cache) return _cache;
-  try {
-    const raw = fs.readFileSync(FILE(), 'utf8');
-    _cache = { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    _cache = { ...DEFAULTS };
+  if (!migrated) {
+    migrated = true;
+    try { migrateLocal(store, path.join(storePath(), 'settings.json')); } catch {}
   }
-  return _cache;
+  return { ...DEFAULTS, ...store.read() };
 }
 
-function persist() {
-  try {
-    fs.mkdirSync(path.dirname(FILE()), { recursive: true });
-    fs.writeFileSync(FILE(), JSON.stringify(_cache, null, 2));
-  } catch (e) {
-    console.error('[settings] persist failed:', e.message);
-  }
+function put(key, value) {
+  load(); // make sure migration ran first
+  try { store.update((s) => { s[key] = value; }); }
+  catch (e) { console.error('[settings] persist failed:', e.message); }
 }
 
 export function getPrefix() {
@@ -36,9 +31,7 @@ export function getPrefix() {
 }
 
 export function setPrefix(p) {
-  const s = load();
-  s.prefix = p;
-  persist();
+  put('prefix', p);
 }
 
 export function getSetting(key) {
@@ -46,9 +39,7 @@ export function getSetting(key) {
 }
 
 export function setSetting(key, value) {
-  const s = load();
-  s[key] = value;
-  persist();
+  put(key, value);
 }
 
 export function getReplyMode() {
@@ -59,7 +50,5 @@ export function getReplyMode() {
 }
 
 export function setReplyMode(mode) {
-  const s = load();
-  s.replyMode = mode === 'poll' ? 'poll' : 'text';
-  persist();
+  put('replyMode', mode === 'poll' ? 'poll' : 'text');
 }

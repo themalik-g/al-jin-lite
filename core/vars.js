@@ -1,75 +1,55 @@
 // ─────────────────────────────────────────────
 // Al-Jin · core/vars.js
-// Persistent per-session variable store (cached).
+// Variable store SHARED by every session (API keys such as GEMINI_API_KEY, .setvar values).
+// Set once in any session → every session sees it. Old per-session vars.json is merged in once.
 // ─────────────────────────────────────────────
-import fs from 'node:fs';
-import { inState, statePath } from './paths.js';
+import { inState } from './paths.js';
+import { sharedJson, migrateLocal } from './shared.js';
 
-const VARS_FILE = () => inState('vars.json');
+const store = sharedJson('vars.json');
+const applied = new Set();      // keys we copied into process.env (real panel env vars are never overridden)
+let migrated = false;
+let lastData = null;
 
-let _cache = null;
-
-export function loadVars() {
-    if (_cache) return _cache;
-    try {
-        const file = VARS_FILE();
-        if (fs.existsSync(file)) {
-            _cache = JSON.parse(fs.readFileSync(file, 'utf-8')) || {};
-            // Populate process.env with persisted variables
-            for (const [k, v] of Object.entries(_cache)) {
-                if (v !== undefined && v !== null && !process.env[k]) {
-                    process.env[k] = String(v);
-                }
-            }
-        } else {
-            _cache = {};
-        }
-    } catch (e) {
-        try { console.error('[vars] loadVars error:', e.message); } catch {}
-        _cache = {};
+function sync() {
+    if (!migrated) { migrated = true; try { migrateLocal(store, inState('vars.json')); } catch {} }
+    const data = store.read();
+    if (data === lastData) return data;
+    lastData = data;
+    for (const [k, v] of Object.entries(data)) {
+        if (v === undefined || v === null) continue;
+        if (applied.has(k) || !process.env[k]) { process.env[k] = String(v); applied.add(k); }
     }
-    return _cache;
+    for (const k of [...applied]) {
+        if (!(k in data)) { delete process.env[k]; applied.delete(k); }
+    }
+    return data;
 }
 
-function saveVars(data) {
-    try {
-        const file = VARS_FILE();
-        statePath();
-        fs.writeFileSync(file, JSON.stringify(data, null, 2));
-        _cache = data;
-    } catch (e) {
-        try { console.error('[vars] saveVars error:', e.message); } catch {}
-    }
-}
+export function loadVars() { return sync(); }
 
 export function getVar(key) {
     if (!key) return null;
-    const store = loadVars();
-    if (Object.prototype.hasOwnProperty.call(store, key)) return store[key];
+    const data = sync();
+    if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
     return process.env[key] || null;
 }
 
 export function setVar(key, value) {
     if (!key) return false;
-    const store = loadVars();
-    store[key] = value;
-    saveVars(store);
+    store.update((d) => { d[key] = value; });
     process.env[key] = value;
+    applied.add(key);
+    lastData = null;
     return true;
 }
 
 export function delVar(key) {
     if (!key) return false;
-    const store = loadVars();
-    if (Object.prototype.hasOwnProperty.call(store, key)) {
-        delete store[key];
-        saveVars(store);
-        delete process.env[key];
-        return true;
-    }
-    return false;
+    let had = false;
+    store.update((d) => { if (Object.prototype.hasOwnProperty.call(d, key)) { delete d[key]; had = true; } });
+    if (had) { delete process.env[key]; applied.delete(key); lastData = null; }
+    return had;
 }
 
-export function getAllVars() {
-    return loadVars();
-}
+export function getAllVars() { return sync(); }

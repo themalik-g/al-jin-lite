@@ -214,6 +214,14 @@ function installDeps(dir) {
 }
 
 const instDir = (root, id) => path.join(root, 'instances', id);
+const SHARED_ID = '_shared';
+// Session ids: letters/digits/_/- only, never starting with "_" (so "_shared" and path tricks are rejected).
+const VALID_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+const sharedDirOf = root => {
+  const d = path.join(root, 'instances', SHARED_ID);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+};
 
 function makeInstance(root, id) {
   const dir = instDir(root, id);
@@ -302,6 +310,54 @@ function nextSessionId(root) {
 // ─────────────────────────────────────────────
 const children = new Map();
 const restartingSessions = new Set();
+const removed = new Set(); // ids deleted with .delsession — never auto-restarted / re-created
+const STAGGER_MS = Number(process.env.WRAITH_SPAWN_STAGGER_MS ?? 2500);
+
+// Tell every running session how many sessions share the box (CPU/RAM limits are split by it).
+function broadcastCount() {
+  const live = [...children.values()].filter(r => !r.deleting);
+  const count = Math.max(1, live.length);
+  for (const r of live) {
+    try { if (r.proc.connected) r.proc.send({ type: 'wraith:sessions', count }); } catch {}
+  }
+}
+
+// Start several sessions one after another (a simultaneous boot spikes CPU/RAM and the WA servers).
+function spawnAll(root, ids) {
+  ids.forEach((id, i) => {
+    const go = () => { if (!shuttingDown) spawnSession(root, id, null, { totalSessions: ids.length }); };
+    if (i === 0 || STAGGER_MS <= 0) go(); else setTimeout(go, i * STAGGER_MS);
+  });
+}
+
+// .delsession: unlink the device, stop the process, WAIT for it to exit, then delete the folder.
+// (Old flow deleted the folder while the process was still alive; its clean exit then looked like a
+//  "restart for update" and the launcher respawned it, re-creating the deleted instance.)
+function deleteSession(root, id) {
+  if (!VALID_ID.test(String(id)) || id === 'main') {
+    say(red(`refusing to delete session "${id}"`));
+    return;
+  }
+  removed.add(id);
+  const dir = instDir(root, id);
+  const wipe = () => {
+    for (let i = 0; i < 5; i++) {
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }); break; }
+      catch (e) { if (i === 4) { say(red(`failed to remove ${id}: ${e.message}`)); return; } }
+    }
+    say(green(`deleted session ${id}`));
+    broadcastCount();
+  };
+  const rec = children.get(id);
+  if (!rec) { wipe(); return; }
+  rec.deleting = true;
+  broadcastCount();
+  const killer = setTimeout(() => { try { rec.proc.kill('SIGKILL'); } catch {} }, 9000);
+  killer.unref?.();
+  rec.proc.once('exit', () => { clearTimeout(killer); setTimeout(wipe, 300); });
+  try { rec.proc.send({ type: 'wraith:logout_and_exit' }); }
+  catch { try { rec.proc.kill('SIGTERM'); } catch {} }
+}
 let shuttingDown = false;
 let rl = null;
 
@@ -379,12 +435,28 @@ async function promptNumber(label = 'number') {
   });
 }
 
-function spawnSession(root, id, number) {
+function spawnSession(root, id, number, opts = {}) {
+  const refuse = why => {
+    say(yellow(`not starting session "${id}": ${why}`));
+    return { proc: null, linkedPromise: Promise.resolve(false), exitPromise: Promise.resolve({ code: 1 }) };
+  };
+  if (!VALID_ID.test(String(id))) return refuse('invalid id');
+  if (opts.fresh) removed.delete(id);
+  else if (removed.has(id)) return refuse('it was deleted');
+  const shared = sharedDirOf(root);
   const dir = makeInstance(root, id);
-  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || '256';
+  // RAM-budget aware: split the box's total RAM across every session that will run
+  // concurrently, instead of handing each one the full ceiling (which is wrong the
+  // moment a 2nd session starts). Override per-session with WRAITH_MAX_OLD_SPACE_SIZE.
+  const totalSessions = Math.max(1, Number(opts.totalSessions) || 1);
+  const ramBudgetMB = Number(process.env.WRAITH_RAM_BUDGET_MB || 256);
+  const baseOverheadMB = 40; // node baseline + OS slack, per process
+  const autoPerSession = Math.floor((ramBudgetMB - baseOverheadMB) / totalSessions);
+  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || String(Math.max(48, Math.min(256, autoPerSession)));
+  const semiSpace = process.env.WRAITH_V8_SEMI_SPACE_SIZE || (ramBudgetMB <= 256 ? '8' : '16');
   const args = [
     `--max-old-space-size=${maxOldSpace}`,
-    '--max-semi-space-size=16',
+    `--max-semi-space-size=${semiSpace}`,
     '--expose-gc',
   ];
   if (process.env.WRAITH_V8_POOL_SIZE) {
@@ -399,6 +471,10 @@ function spawnSession(root, id, number) {
     WRAITH_REPO_ROOT: root,
     WRAITH_SESSION_ID: id,
     WRAITH_DATA_DIR: dir,
+    WRAITH_SHARED_DIR: shared,
+    WRAITH_ACTIVE_SESSIONS: String(totalSessions),
+    // one V8 compile cache for every session → faster boot, less CPU
+    NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE || path.join(shared, '.compile-cache'),
   };
 
   say(cyan(`starting session ${id}${number ? ' · +' + number : ''}`));
@@ -458,7 +534,7 @@ function spawnSession(root, id, number) {
             }`
           )
         );
-        spawnSession(root, m.sessionId, m.number || null);
+        spawnSession(root, m.sessionId, m.number || null, { totalSessions: children.size + 1, fresh: true });
       }
     }
     if (m?.type === 'wraith:restart_all') {
@@ -477,24 +553,8 @@ function spawnSession(root, id, number) {
       }
     }
     if (m?.type === 'wraith:delete_session' && m.sessionId) {
-      const targetId = m.sessionId;
-      say(yellow(`delete session request received for ${targetId}`));
-      if (children.has(targetId)) {
-        const targetRec = children.get(targetId);
-        try {
-          targetRec.proc.kill('SIGTERM');
-        } catch {}
-        children.delete(targetId);
-      }
-      const targetDir = instDir(root, targetId);
-      setTimeout(() => {
-        try {
-          fs.rmSync(targetDir, { recursive: true, force: true });
-          say(green(`deleted session instance directory: ${targetId}`));
-        } catch (e) {
-          say(red(`failed to remove directory for ${targetId}: ${e.message}`));
-        }
-      }, 1500);
+      say(yellow(`delete session request received for ${m.sessionId}`));
+      deleteSession(root, String(m.sessionId));
     }
   });
 
@@ -503,18 +563,21 @@ function spawnSession(root, id, number) {
   );
 
   proc.on('exit', (code, signal) => {
-    children.delete(id);
+    if (children.get(id) === rec) children.delete(id);
     try {
       resolveExit({ code, signal });
     } catch {}
+    clearTimeout(rec.resetTimer);
+    broadcastCount();
 
     if (shuttingDown) return;
+    if (rec.deleting || removed.has(id)) return; // deleted on purpose — never restart
 
     if (restartingSessions.has(id)) {
       restartingSessions.delete(id);
       say(cyan(`restarting session ${id} for update…`));
       setTimeout(() => {
-        if (!shuttingDown) spawnSession(root, id, rec.number);
+        if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec.number, { totalSessions: Math.max(1, children.size) });
       }, 1000);
       return;
     }
@@ -545,7 +608,7 @@ function spawnSession(root, id, number) {
     );
 
     setTimeout(() => {
-      if (!shuttingDown) spawnSession(root, id, rec.number);
+      if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec.number, { totalSessions: Math.max(1, children.size) });
     }, wait);
   });
 
@@ -553,6 +616,7 @@ function spawnSession(root, id, number) {
   rec.resetTimer = setTimeout(() => {
     rec.restarts = 0;
   }, 20_000);
+  setTimeout(broadcastCount, 800);
 
   return { proc, linkedPromise, exitPromise };
 }
@@ -601,7 +665,7 @@ async function linkOne(root, label, presetNumber = null) {
   const id = nextSessionId(root);
   say(grey(`spawning session ${id} for +${number} — waiting for pairing code…`));
 
-  const result = spawnSession(root, id, number);
+  const result = spawnSession(root, id, number, { totalSessions: children.size + 1, fresh: true });
   try {
     await waitForLink(result, id);
     console.log(green(`\n ✔ ${id} linked (+${number})`));
@@ -692,7 +756,7 @@ process.on('SIGTERM', () => quiet('SIGTERM'));
             )}`
           )
         );
-        for (const id of existing) spawnSession(root, id, null);
+        spawnAll(root, existing);
         return;
       }
 
@@ -732,14 +796,14 @@ process.on('SIGTERM', () => quiet('SIGTERM'));
     });
 
     if (ADD_MODE) {
-      for (const id of existing) spawnSession(root, id, null);
+      spawnAll(root, existing);
       await wizard(root);
       return;
     }
 
     if (existing.length) {
       say(grey(`resuming ${existing.length} session(s): ${existing.join(', ')}`));
-      for (const id of existing) spawnSession(root, id, null);
+      spawnAll(root, existing);
       return;
     }
 

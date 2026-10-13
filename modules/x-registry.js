@@ -17,6 +17,9 @@ const LOADERS = {
     tools: () => import('./x-tools.js'),
     web: () => import('./x-web.js'),
     media: () => import('./x-media.js'),
+    guard: () => import('./x-guard.js'),
+    react: () => import('./x-react.js'),
+    repair: () => import('./x-repair.js'),
 };
 
 // [verb, module, export, perm, ...aliases]
@@ -42,6 +45,18 @@ const TABLE = [
     ['poll', 'group', 'poll', 'group'],
     ['vote', 'group', 'vote', 'group'],
     ['afk', 'group', 'afk', 'all'],
+    // guard (modules/x-guard.js, no extra dependency)
+    ['muteuser', 'guard', 'muteuser', 'admin'],
+    ['unmuteuser', 'guard', 'unmuteuser', 'admin'],
+    ['mutelist', 'guard', 'mutelist', 'admin'],
+    ['mutesticker', 'guard', 'mutesticker', 'admin'],
+    ['unmutesticker', 'guard', 'unmutesticker', 'admin'],
+    ['antiforward', 'guard', 'antiforward', 'admin', 'antifw', 'afw'],
+    ['dnd', 'guard', 'dnd', 'admin', 'donotdisturb'],
+    // owner-controlled auto-react in every chat (off by default — stealthy)
+    ['reactall', 'react', 'reactall', 'owner', 'autoreactall', 'globalreact'],
+    // own-phone "Waiting for this message" repair
+    ['fixkeys', 'repair', 'fixkeys', 'owner', 'fixown', 'resetkeys', 'fixsession', 'fixwaiting'],
     // bot control
     ['ban', 'bot', 'ban', 'owner'],
     ['unban', 'bot', 'unban', 'owner'],

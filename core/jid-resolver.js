@@ -6,8 +6,15 @@ import fs from 'fs';
 import path from 'path';
 import { readJson, writeJsonAtomic } from './state-io.js';
 import { inState, statePath } from './paths.js';
+import { sharedJson, migrateLocal } from './shared.js';
 
-const CACHE_FILE = inState('channel-cache.json');
+// Channel cache is the same for every session → one shared file.
+const channelStore = sharedJson('channel-cache.json', { ttlMs: 5000 });
+let channelMigrated = false;
+const channelCache = () => {
+    if (!channelMigrated) { channelMigrated = true; try { migrateLocal(channelStore, inState('channel-cache.json')); } catch {} }
+    return channelStore;
+};
 const DEBUG = process.env.WRAITH_DEBUG === '1';
 
 // Ensure state dir exists
@@ -122,20 +129,20 @@ export function cacheChannelFromMessage(msg) {
     if (!jid.endsWith('@newsletter')) return;
 
     try {
-        const cache = readJson(CACHE_FILE, {});
-        if (!cache[jid]) {
-            cache[jid] = { jid, name: null, firstSeen: Date.now(), lastSeen: Date.now() };
-        } else {
-            cache[jid].lastSeen = Date.now();
-        }
-        writeJsonAtomic(CACHE_FILE, cache);
+        const st = channelCache();
+        const rec = st.read()[jid];
+        if (rec && Date.now() - (rec.lastSeen || 0) < 10 * 60 * 1000) return;   // fewer disk writes
+        st.update((cache) => {
+            if (!cache[jid]) cache[jid] = { jid, name: null, firstSeen: Date.now(), lastSeen: Date.now() };
+            else cache[jid].lastSeen = Date.now();
+        });
     } catch (e) {
         if (DEBUG) console.log('[channel-cache] failed:', e.message);
     }
 }
 
 export function getCachedChannels() {
-    return readJson(CACHE_FILE, []) === [] ? [] : Object.values(readJson(CACHE_FILE, {}));
+    return Object.values(channelCache().read());
 }
 
 // ─────────────────────────────────────────────
