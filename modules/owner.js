@@ -282,6 +282,7 @@ export async function setstatusCommand(sock, chat, msg, args) {
 export async function getstatusCommand(sock, chat, msg, args) {
     if (ownerOnly(sock, chat, msg)) return;
     try {
+        // ── 1. Resolve the target JID ──────────────────────────────────────
         const ctx = msg.message?.extendedTextMessage?.contextInfo;
         let targetJid = ctx?.participant || (Array.isArray(ctx?.mentionedJid) && ctx.mentionedJid[0]);
 
@@ -302,57 +303,16 @@ export async function getstatusCommand(sock, chat, msg, args) {
         const digits = targetJid.replace(/\D/g, '') || targetJid.split('@')[0];
         const stamp = (ms) => new Date(ms).toLocaleString('en-GB', { hour12: true, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-        // ── Step 1: try the local relay index first ──────────────────────────
-        let stories = getStatusIndexFor(_digits(targetJid) || digits);
+        // ── 2. Query the local status relay index (populated by ghost.js) ──
+        // NOTE: Baileys has no `queryStatus` method — statuses must be captured
+        // live by the relay (messages.upsert on status@broadcast) and indexed.
+        const stories = getStatusIndexFor(_digits(targetJid) || digits);
 
-        // ── Step 2: if nothing in the index, try fetching LIVE from WhatsApp ─
-        if (!stories.length) {
-            await sock.sendMessage(chat, {
-                text: `🔍 No saved status from @${digits} — fetching live from WhatsApp…`,
-                mentions: [targetJid]
-            }, { quoted: msg });
-
-            try {
-                // Baileys: query the target's current status stories
-                const liveStories = await sock.queryStatus(targetJid).catch(() => null);
-
-                if (liveStories && Array.isArray(liveStories) && liveStories.length) {
-                    // Build index-compatible records from the live fetch
-                    stories = liveStories.map((s, i) => ({
-                        id: s?.key?.id || `live-${Date.now()}-${i}`,
-                        type: s?.message?.imageMessage ? 'image'
-                            : s?.message?.videoMessage ? 'video'
-                            : s?.message?.audioMessage ? 'audio'
-                            : 'text',
-                        caption: s?.message?.imageMessage?.caption
-                            || s?.message?.videoMessage?.caption
-                            || s?.message?.conversation
-                            || s?.message?.extendedTextMessage?.text
-                            || '',
-                        at: (s?.messageTimestamp ? Number(s.messageTimestamp) * 1000 : Date.now()),
-                        fwd: null,   // not relayed yet — will fetch below
-                        _live: s,    // keep the raw story for media download
-                    }));
-
-                    // Relay each live story to the ghost destination so media is captured
-                    const { relayStatusMessage } = await import('./ghost.js');
-                    for (const story of stories) {
-                        try {
-                            const fwd = await relayStatusMessage(sock, story._live, { force: true });
-                            if (fwd) story.fwd = fwd;
-                        } catch {}
-                        delete story._live; // don't leak raw proto into the index
-                    }
-                }
-            } catch (e) {
-                // queryStatus not available or failed — fall through to the not-found message
-            }
-        }
-
-        // ── Step 3: report ───────────────────────────────────────────────────
+        // ── 3. Report ────────────────────────────────────────────────────────
         if (!stories.length) {
             return sock.sendMessage(chat, {
-                text: `❌ No status from @${digits} was seen in the last 24 h (or status relay is off).`,
+                text: `❌ No status from @${digits} was captured in the last 24 h.\n\n` +
+                      `Make sure the status relay is active (see \`.ghost\`) and that the bot has received at least one status from this contact.`,
                 mentions: [targetJid]
             }, { quoted: msg });
         }
@@ -947,4 +907,4 @@ export async function stealfullCommand(sock, chat, msg, args) {
     } catch (e) {
         await sock.sendMessage(chat, { text: `⚠️ stealfull failed: ${e.message}` }, { quoted: msg }).catch(() => {});
     }
-}
+                               }
