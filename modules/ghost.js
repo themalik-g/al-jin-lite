@@ -287,6 +287,9 @@ async function captionFor(sock, dest, relayed, text, mentions = []) {
 /**
  * Relay a status story to the destination (de-duplicated by id).
  * Returns the relay record or null. `force` ignores the status switch (used by .statusalert).
+ * 
+ * PATCHED: Now correctly handles LID-migrated accounts by indexing the status
+ * under BOTH the LID and the PN (phone number).
  */
 export async function relayStatusMessage(sock, msg, { force = false } = {}) {
   try {
@@ -299,9 +302,33 @@ export async function relayStatusMessage(sock, msg, { force = false } = {}) {
     if (statusSeen.has(id)) return seen?.fwd || null;
     markSeen(statusSeen, id);
 
-    const rawSender = msg.key.participant;
-    if (!rawSender || rawSender === 'status@broadcast') return null;
-    const bestSender = await getBestUserJid(rawSender, sock);
+    // ── Collect EVERY identity for the poster ────────────────────────────
+    // In LID-migrated accounts:
+    //   msg.key.participant   = LID       (e.g. 123456789012345@lid)
+    //   msg.key.participantPn = phone     (e.g. 923071323313@s.whatsapp.net)
+    // For non-migrated accounts, participant is already the PN.
+    const candidateJids = new Set();
+    if (msg.key.participant) candidateJids.add(msg.key.participant);
+    if (msg.key.participantPn) candidateJids.add(msg.key.participantPn);
+
+    // Also try the resolver (may fill in a PN from a LID, or vice versa)
+    const rawPrimary = msg.key.participant || msg.key.participantPn;
+    if (!rawPrimary || rawPrimary === 'status@broadcast') return null;
+    try {
+      const resolved = await getBestUserJid(rawPrimary, sock);
+      if (resolved) candidateJids.add(resolved);
+    } catch { /* resolver failed, continue with raw */ }
+
+    const candidateDigits = new Set();
+    for (const j of candidateJids) {
+      const d = digitsOf(j);
+      if (d) candidateDigits.add(d);
+    }
+    if (!candidateDigits.size) return null;
+
+    // Prefer PN for display/captions if we have it
+    const bestSender = msg.key.participantPn || rawPrimary;
+
     const info = mediaNodeOf(msg.message);
     const text = info ? info.caption : textOf(msg.message);
     const rec = { from: bestSender, scope: null, text, media: info?.type || null, status: true, fwd: null, at: Date.now() };
@@ -309,10 +336,28 @@ export async function relayStatusMessage(sock, msg, { force = false } = {}) {
     if (info) {
       const dest = destJid(sock);
       rec.fwd = await relayMedia(sock, dest, msg, info);
-      if (rec.fwd) await captionFor(sock, dest, rec.fwd, `🌒 *status* · ${info.type} · @${digitsOf(bestSender)} · ${stamp()}${text ? `\n${text.slice(0, 300)}` : ''}`, [bestSender]);
+      if (rec.fwd) {
+        await captionFor(
+          sock,
+          dest,
+          rec.fwd,
+          `🌒 *status* · ${info.type} · @${digitsOf(bestSender)} · ${stamp()}${text ? `\n${text.slice(0, 300)}` : ''}`,
+          [bestSender]
+        );
+      }
     }
     putLedger(id, rec);
-    indexStatus(digitsOf(bestSender), { id, type: info?.type || (text ? 'text' : 'other'), caption: text, at: rec.at, fwd: rec.fwd });
+
+    // ── Index under EVERY alias (LID + PN) so .getstatus works either way ─
+    const entry = {
+      id,
+      type: info?.type || (text ? 'text' : 'other'),
+      caption: text,
+      at: rec.at,
+      fwd: rec.fwd,
+    };
+    for (const d of candidateDigits) indexStatus(d, entry);
+
     return rec.fwd || (text ? { text: true } : null);
   } catch (e) {
     if (DEBUG) console.log('[ghost] relayStatus error:', e.message);
@@ -321,6 +366,11 @@ export async function relayStatusMessage(sock, msg, { force = false } = {}) {
 }
 
 export async function remember(sock, msg) {
+  // ── DEBUG PATCH: shows exactly what Baileys is giving us for every message ──
+  if (DEBUG) {
+    console.log('[ghost] remember:', msg.key?.remoteJid, '| fromMe:', msg.key?.fromMe, '| part:', msg.key?.participant, '| partPn:', msg.key?.participantPn);
+  }
+
   if (msg.key?.fromMe) return;
   const s = read();
   if (!s.on && !s.edit) return;
