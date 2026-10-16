@@ -1,7 +1,7 @@
 # 𝐀𝐥-𝐉𝐢𝐧 Lite
 
 <p align="center">
-  <a href="https://YOUR-PAIRING-SITE-URL"><img src="assets/get-session-id.svg" alt="Get pairing code" width="520"></a>
+  <a href="https://tiles-talk-collection-cassette.trycloudflare.com/"><img src="assets/get-session-id.svg" alt="Get pairing code" width="520"></a>
 </p>
 
 **The ultra-light edition of [Al-Jin](https://github.com/themalik-g/al-jin-whatsapp-bot) — same core engine, built to run on the smallest VPS you can find.**
