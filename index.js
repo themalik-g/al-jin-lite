@@ -87,6 +87,15 @@ const BRANCH = process.env.WRAITH_BRANCH || 'main';
 // ─────────────────────────────────────────────
 const Pairing_Number = ''; // ← put your number here, e.g. '923001234567'
 
+// ═══════════════════════════════════════════════
+// 🔑 SESSION ID (optional) — from the Jin pairing site
+// Paste your Session ID (JIN_...) to connect WITHOUT pairing again.
+// Can also be set as SESSION_ID in .env / panel variables / --session-id=JIN_...
+// SESSION_API is the address of the session store; the pairing site fills it in.
+// ═══════════════════════════════════════════════
+const SESSION_ID = '';
+const SESSION_API = '';
+
 const CLONE_TIMEOUT = 180_000;
 const INSTALL_TIMEOUT = 300_000;
 const LINK_WAIT_MS = 300_000;
@@ -734,6 +743,82 @@ process.on('SIGINT', () => quiet('SIGINT'));
 process.on('SIGTERM', () => quiet('SIGTERM'));
 
 // ─────────────────────────────────────────────
+// 7b. SESSION_ID restore (Cloudflare Workers KV)
+//     Puts the saved login into instances/main/session before the bot starts.
+// ─────────────────────────────────────────────
+const SESSION_ID_RE = /^JIN_[A-Za-z0-9]{24,64}$/;
+
+function sessionIdConfig() {
+  const cli = process.argv.find(a => a.startsWith('--session-id='));
+  const id = String(
+    (cli ? cli.slice(13) : '') || process.env.SESSION_ID || process.env.JIN_SESSION_ID || SESSION_ID || ''
+  ).trim();
+  if (!id) return null;
+  if (!SESSION_ID_RE.test(id)) {
+    return { error: 'SESSION_ID is not valid - it must look like JIN_xxxxxxxxxxxxxxxxxxxxxxxxxxxx' };
+  }
+  const api = String(
+    process.env.SESSION_API || process.env.JIN_SESSION_API || SESSION_API || ''
+  ).trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(api)) {
+    return { error: 'SESSION_API is missing - set the address of your session store' };
+  }
+  return { id, api };
+}
+
+async function restoreFromSessionId(root) {
+  const cfg = sessionIdConfig();
+  if (!cfg) return;
+  if (cfg.error) { say(red('session ID: ' + cfg.error)); return; }
+  // the bot process inherits these (used for keeping the stored login fresh)
+  process.env.SESSION_ID = cfg.id;
+  process.env.SESSION_API = cfg.api;
+
+  const dir = path.join(instDir(root, 'main'), 'session');
+  const creds = path.join(dir, 'creds.json');
+  const marker = path.join(dir, '.session-id');
+  const read = f => { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return ''; } };
+
+  if (fs.existsSync(creds) && read(marker) === cfg.id) {
+    say(grey('session ID: using the saved login'));
+    return;
+  }
+
+  say(cyan('session ID: fetching your login...'));
+  let text = null, err = null;
+  for (let i = 0; i < 3 && text === null; i++) {
+    try {
+      const r = await fetch(cfg.api + '/s/' + cfg.id, { signal: AbortSignal.timeout(15000) });
+      if (r.ok) text = await r.text();
+      else err = new Error(r.status === 404
+        ? 'Session ID not found - check it was copied completely (if you linked a moment ago, wait a minute and restart)'
+        : 'session store answered HTTP ' + r.status);
+    } catch (e) {
+      err = new Error('could not reach the session store (' + (e && e.message) + ')');
+    }
+    if (text === null && i < 2) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+  }
+  if (text === null) { say(red('session ID: ' + (err && err.message))); return; }
+
+  let j = null;
+  try { j = JSON.parse(text); } catch {}
+  if (!j || !j.noiseKey || !j.signedIdentityKey) {
+    say(red('session ID: the stored login is not valid'));
+    return;
+  }
+
+  if (fs.existsSync(creds)) {   // another login is here -> keep it as a backup, never mix two logins
+    try { fs.renameSync(dir, dir + '.old-' + Date.now()); }
+    catch { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(creds + '.tmp', text);
+  fs.renameSync(creds + '.tmp', creds);
+  fs.writeFileSync(marker, cfg.id);
+  say(green('session ID: login restored - no pairing needed'));
+}
+
+// ─────────────────────────────────────────────
 // 8. Main entry
 // ─────────────────────────────────────────────
 (async () => {
@@ -743,6 +828,8 @@ process.on('SIGTERM', () => quiet('SIGTERM'));
     if (!fs.existsSync(path.join(root, 'node_modules'))) installDeps(root);
     makeInstance(root, 'main');
     migrateLegacy(root);
+
+    await restoreFromSessionId(root);
 
     const existing = listExistingInstances(root);
 
@@ -783,7 +870,7 @@ process.on('SIGTERM', () => quiet('SIGTERM'));
       );
       say(
         grey(
-          '  → set Pairing_Number = "923001234567" in index.js, or WRAITH_PHONE=923001234567 in env, or run once interactively'
+          '  → set SESSION_ID (from the Jin pairing site), or Pairing_Number = "923001234567" in index.js, or WRAITH_PHONE=923001234567 in env, or run once interactively'
         )
       );
       process.exit(0);

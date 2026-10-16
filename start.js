@@ -51,6 +51,7 @@ import { getWaVersion } from './core/shared.js';
 import { loadVars } from './core/vars.js';
 import { newsletterContext } from './lib/buttons.js';
 import { repairIfRequested } from './core/session-repair.js';
+import { restoreSession, wrapSaveCreds } from './lib/session-id.js';
 
 // ── CLI Arg Parsing ──
 const argv = process.argv.slice(2);
@@ -258,9 +259,12 @@ async function ignite() {
   if (isStarting || retiring) return;
   isStarting = true;
 
+  // SESSION_ID (Cloudflare Workers KV): put the saved login in place BEFORE Baileys reads the folder
+  if (sessionId === 'main') await restoreSession(AUTH_DIR, (m) => console.log(tag, yellow(m)));
   // .fixkeys / repair-sessions.flag → drop stale signal sessions BEFORE Baileys loads the keys
   repairIfRequested(AUTH_DIR, STATE_DIR, (m) => console.log(tag, yellow(m)));
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { state, saveCreds: rawSaveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const saveCreds = sessionId === 'main' ? wrapSaveCreds(rawSaveCreds, AUTH_DIR, (m) => console.log(tag, grey(m))) : rawSaveCreds;
   const version = await getWaVersion(fetchLatestBaileysVersion); // fetched once for ALL sessions
 
   const sock = makeWASocket({

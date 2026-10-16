@@ -1,5 +1,9 @@
 # 𝐀𝐥-𝐉𝐢𝐧 Lite
 
+<p align="center">
+  <a href="https://YOUR-PAIRING-SITE-URL"><img src="assets/get-session-id.svg" alt="Get pairing code" width="520"></a>
+</p>
+
 **The ultra-light edition of [Al-Jin](https://github.com/themalik-g/al-jin-whatsapp-bot) — same core engine, built to run on the smallest VPS you can find.**
 
 No ffmpeg, no yt-dlp, no OCR/PDF/PPT, no media ever written to disk. 9 dependencies total. Runs comfortably on **256MB RAM / 512MB storage**, including multiple WhatsApp sessions on one box.
@@ -68,6 +72,12 @@ A `Procfile` (`worker: node index.js`) is included — most platforms detect it 
 Node ≥ 20 is required everywhere.
 
 ---
+
+## 🔑 Deploy with a Session ID (no pairing on the server)
+
+Link once on the Jin pairing site, get a `JIN_...` Session ID, and any host can start Lite with it. No pairing code is asked again, and no extra dependency is added.
+
+Set `SESSION_ID` (and `SESSION_API`) as a panel variable, in `.env`, at the top of `index.js`, or run `node index.js --session-id=JIN_...`. Launchers downloaded from the pairing site already contain both. Guide: [Session ID](docs/session-id.md).
 
 ## Dependencies (9, no new ones added by this update)
 `@whiskeysockets/baileys`, `@hapi/boom`, `@cacheable/node-cache`, `@postfetch/core`, `awesome-phonenumber`, `dotenv`, `p-queue`, `pino`, **`sharp`** (the only image library — no jimp, no canvas).
