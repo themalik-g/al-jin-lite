@@ -31,6 +31,10 @@ VOLUME ["/app/session", "/app/state", "/app/logs"]
 # the V8 heap. Change the CMD flags below for a bigger box.
 ENV UV_THREADPOOL_SIZE=2
 
+# Optional: connect with a Session ID from the Jin pairing site instead of pairing again
+ENV SESSION_ID=""
+ENV SESSION_API=""
+
 # Start a single session (this repo's package.json main entry). For multiple
 # sessions in one container use `node index.js` instead — see README.
 CMD ["node", "--max-old-space-size=200", "--max-semi-space-size=8", "start.js"]

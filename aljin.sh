@@ -11,6 +11,12 @@
 # ─────────────────────────────────────────────
 cd "$(dirname "$0")" || exit 1
 RAW="https://raw.githubusercontent.com/themalik-g/al-jin-lite/main/index.js"
+# Session ID from the Jin pairing site (leave empty to link with your number instead)
+ALJIN_SESSION_ID=""
+ALJIN_SESSION_API=""
+[ -z "${SESSION_ID:-}" ] && SESSION_ID="$ALJIN_SESSION_ID"
+[ -z "${SESSION_API:-}" ] && SESSION_API="$ALJIN_SESSION_API"
+[ -n "${SESSION_ID:-}" ] && export SESSION_ID SESSION_API
 say() { printf '\n\033[1;35m[Al-Jin Lite]\033[0m %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 node_ok() { have node && node -e 'process.exit(parseInt(process.versions.node)>=20?0:1)' >/dev/null 2>&1; }
@@ -68,7 +74,7 @@ fi
 
 # 3) number (asked once) ─────────────────────
 # A linked session lives in instances/ (bot next to index.js) or wraith/instances/ (bot downloaded by the launcher).
-linked() { [ -n "$(ls -A instances 2>/dev/null)" ] || [ -n "$(ls -A wraith/instances 2>/dev/null)" ]; }
+linked() { [ -n "${SESSION_ID:-}" ] || [ -n "$(ls -A instances 2>/dev/null)" ] || [ -n "$(ls -A wraith/instances 2>/dev/null)" ]; }
 NUMFILE=".aljin-number"
 if [ ! -s "$NUMFILE" ] && ! linked; then
   while :; do
