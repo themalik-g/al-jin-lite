@@ -7,6 +7,7 @@ import path from 'node:path';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { isOwner, isPrimaryOwner, addSecondaryOwner, delSecondaryOwner, getOwnerDetails, registerOwnerLid } from '../core/identity.js';
 import { getBestUserJid } from '../core/jid-resolver.js';
+import { canReachLauncher, sendToLauncher } from '../core/launcher-ipc.js';
 import { readJson } from '../core/state-io.js';
 import { inState, statePath } from '../core/paths.js';
 import { getWaVersion } from '../core/shared.js';
@@ -60,8 +61,8 @@ export async function addsessionCommand(sock, chat, msg, args) {
     }
     const newSessionId = `sess${maxN + 1}`;
 
-    if (typeof process.send === 'function') {
-        process.send({
+    if (canReachLauncher()) {
+        sendToLauncher({
             type: 'wraith:spawn_session',
             sessionId: newSessionId,
             number: rawNumber
@@ -94,8 +95,8 @@ export async function delsessionCommand(sock, chat, msg, args) {
         return sock.sendMessage(chat, { text: `❌ Session \`${targetId}\` does not exist.` }, { quoted: msg });
     }
 
-    if (typeof process.send === 'function') {
-        process.send({ type: 'wraith:delete_session', sessionId: targetId });
+    if (canReachLauncher()) {
+        sendToLauncher({ type: 'wraith:delete_session', sessionId: targetId });
         await sock.sendMessage(chat, { text: `🗑️ Removing session \`${targetId}\`: unlinking its device, stopping it, then deleting its folder. It will not restart.` }, { quoted: msg });
     } else {
         try {
@@ -566,8 +567,8 @@ export async function setsessionCommand(sock, chat, msg, args) {
         fs.writeFileSync(path.join(newStateDir, 'owner.json'), JSON.stringify({ owner: validatedNumber }, null, 2));
 
         // Signal launcher via IPC to spawn session
-        if (typeof process.send === 'function') {
-            process.send({
+        if (canReachLauncher()) {
+            sendToLauncher({
                 type: 'wraith:spawn_session',
                 sessionId: newSessionId,
                 number: null
