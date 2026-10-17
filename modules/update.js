@@ -16,6 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isOwner } from '../core/identity.js';
+import { sendToLauncher } from '../core/launcher-ipc.js';
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -182,7 +183,7 @@ export async function updateCommand(sock, chat, msg) {
 
         // 7) If executed from main session, inform parent to restart all secondary sessions
         if (isMain) {
-            try { process.send?.({ type: 'wraith:restart_all' }); } catch {}
+            try { sendToLauncher({ type: 'wraith:restart_all' }); } catch {}
         }
 
         // 8) Give time for message delivery, then exit non-zero so the

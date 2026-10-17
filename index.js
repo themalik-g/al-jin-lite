@@ -333,31 +333,262 @@ function nextSessionId(root) {
 }
 
 // ─────────────────────────────────────────────
-// 7. Session spawning
+// 7. Session spawning — pods of worker_threads
+//
+// A session is no longer its own OS process. Several sessions (default 4,
+// WRAITH_SESSIONS_PER_POD) share one "pod" process (pod.js), each running
+// as its own worker_thread — its own V8 isolate and module cache (so every
+// per-session cache/Map/singleton elsewhere in this codebase stays exactly
+// as isolated as it was when every session was a separate process), but
+// sharing that pod's Node/V8 process baseline instead of paying it again
+// per session. Trade-off: if a pod process itself dies (vs. one of its
+// worker threads erroring), every session it was hosting goes down together
+// and gets restarted together — set WRAITH_SESSIONS_PER_POD=1 to go back to
+// one process per session (maximum isolation, none of the RAM savings).
 // ─────────────────────────────────────────────
-const children = new Map();
+const PODS_SESSIONS_PER_POD = Math.max(1, Number(process.env.WRAITH_SESSIONS_PER_POD || 4));
+const RAM_BUDGET_MB = Number(process.env.WRAITH_RAM_BUDGET_MB || detectRamBudgetMB());
+
+const pods = new Map();      // podId → { proc, sessionIds: Set<string> }
+const children = new Map();  // sessionId → { podId, number, restarts, resetTimer, resolveLinked, resolveExit, deleting }
 const restartingSessions = new Set();
 const removed = new Set(); // ids deleted with .delsession — never auto-restarted / re-created
 const STAGGER_MS = Number(process.env.WRAITH_SPAWN_STAGGER_MS ?? 2500);
+let podCounter = 0;
+let currentRoot = null; // set by spawnAll/spawnSession; needed by pod message handlers
+let shuttingDown = false;
+let rl = null;
+
+function totalLiveSessions() {
+  return Math.max(1, [...children.values()].filter(r => !r.deleting).length);
+}
 
 // Tell every running session how many sessions share the box (CPU/RAM limits are split by it).
 function broadcastCount() {
-  const live = [...children.values()].filter(r => !r.deleting);
-  const count = Math.max(1, live.length);
-  for (const r of live) {
-    try { if (r.proc.connected) r.proc.send({ type: 'wraith:sessions', count }); } catch {}
+  const count = totalLiveSessions();
+  for (const podId of pods.keys()) sendToPod(podId, { type: 'wraith:sessions', count });
+}
+
+function muteAll() {
+  for (const podId of pods.keys()) sendToPod(podId, { type: 'wraith:mute_all' });
+}
+function unmuteAll() {
+  for (const podId of pods.keys()) sendToPod(podId, { type: 'wraith:unmute_all' });
+}
+
+// Every outgoing message to a pod goes through here: a brand-new pod's
+// child_process technically exists (spawn() returned) before its own
+// process.on('message', …) has actually registered, so anything sent in
+// that window is queued and flushed once the pod confirms it's listening
+// (wraith:pod_ready) instead of silently racing it.
+function sendToPod(podId, msg) {
+  const pod = pods.get(podId);
+  if (!pod) return false;
+  if (!pod.ready) { pod.pending.push(msg); return true; }
+  try { pod.proc.send(msg); return true; } catch { return false; }
+}
+
+function sendToSession(id, payload) {
+  const rec = children.get(id);
+  if (!rec) return false;
+  if (!pods.has(rec.podId)) return false;
+  return sendToPod(rec.podId, { type: 'wraith:to_session', sessionId: id, payload });
+}
+
+// Find a pod with room, or spin up a new one. `root` is needed only to spawn a fresh pod.
+function findOrCreatePod(root) {
+  for (const [podId, pod] of pods) {
+    if (pod.sessionIds.size < PODS_SESSIONS_PER_POD) return podId;
+  }
+  return createPod(root);
+}
+
+function createPod(root) {
+  const podId = `pod${++podCounter}`;
+  const args = [
+    '--max-old-space-size=64', // the pod's own orchestration thread — small, fixed
+    '--expose-gc',             // process-wide: every worker thread in this pod gets global.gc too
+  ];
+  if (process.env.WRAITH_V8_POOL_SIZE) args.push(`--v8-pool-size=${process.env.WRAITH_V8_POOL_SIZE}`);
+  args.push(path.join(root, 'pod.js'));
+
+  const env = {
+    ...process.env,
+    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '2',
+    WRAITH_REPO_ROOT: root,
+    WRAITH_POD_ID: podId,
+    WRAITH_POD_SESSIONS: '[]',
+    WRAITH_RAM_BUDGET_MB: String(RAM_BUDGET_MB),
+    WRAITH_ACTIVE_SESSIONS: String(totalLiveSessions()),
+  };
+
+  const proc = spawn('node', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env });
+  proc.stdout.on('data', d => process.stdout.write(d));
+  proc.stderr.on('data', d => process.stderr.write(d));
+  proc.on('error', err => console.error(clock(), red(`pod ${podId} spawn error:`), err.message));
+
+  const pod = { proc, sessionIds: new Set(), ready: false, pending: [] };
+  pods.set(podId, pod);
+
+  proc.on('message', m => handlePodMessage(podId, m));
+
+  proc.on('exit', (code, signal) => {
+    pods.delete(podId);
+    if (shuttingDown) return;
+    // The whole pod died — every session it was hosting goes down with it.
+    // Treat each as a crash so the normal per-session backoff/restart below
+    // picks them back up (likely redistributed across whatever pods exist).
+    const hosted = [...pod.sessionIds];
+    if (hosted.length) {
+      say(red(`${podId} exited (code ${code}, signal ${signal}) — restarting its ${hosted.length} session(s)`));
+    }
+    for (const id of hosted) onSessionDown(root, id, { crashed: true });
+  });
+
+  return podId;
+}
+
+// A specific session's worker is gone (crashed, deleted on purpose, or its
+// whole pod died). Mirrors what a child process's own 'exit' handler used to
+// do, just re-triggerable per session instead of per process.
+function onSessionDown(root, id, { crashed }) {
+  const rec = children.get(id);
+  const pod = rec && pods.get(rec.podId);
+  if (pod) pod.sessionIds.delete(id);
+  if (rec) children.delete(id);
+  try { rec?.resolveExit({ code: crashed ? 1 : 0 }); } catch {}
+  clearTimeout(rec?.resetTimer);
+  broadcastCount();
+
+  if (shuttingDown) return;
+  if (rec?.deleting || removed.has(id)) return; // deleted on purpose — never restart
+
+  if (restartingSessions.has(id)) {
+    restartingSessions.delete(id);
+    say(cyan(`restarting session ${id} for update…`));
+    setTimeout(() => { if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec?.number, {}); }, 1000);
+    return;
+  }
+
+  if (!crashed) return; // clean, intentional exit (e.g. deleted) — nothing more to do
+
+  const restarts = (rec?.restarts || 0) + 1;
+  if (restarts > MAX_RESTARTS) {
+    say(red(`${id}: exceeded max restarts (${MAX_RESTARTS}) — giving up`));
+    return;
+  }
+  const wait = Math.min(1500 * Math.pow(2, restarts - 1), 30_000);
+  say(yellow(`${id}: crashed · retry ${restarts} in ${(wait / 1000).toFixed(1)}s`));
+  setTimeout(() => {
+    if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec?.number, { restarts });
+  }, wait);
+}
+
+function handlePodMessage(podId, m) {
+  if (!m || typeof m !== 'object') return;
+
+  if (m.type === 'wraith:pod_ready') {
+    const pod = pods.get(podId);
+    if (pod && !pod.ready) {
+      pod.ready = true;
+      const queued = pod.pending;
+      pod.pending = [];
+      for (const queuedMsg of queued) {
+        try { pod.proc.send(queuedMsg); } catch {}
+      }
+    }
+    return;
+  }
+
+  const id = m.fromSessionId || m.sessionId;
+
+  if (m.type === 'wraith:linked' && id) {
+    try { children.get(id)?.resolveLinked(true); } catch {}
+  }
+  if ((m.type === 'wraith:session_exited' || m.type === 'wraith:worker_crashed') && id) {
+    onSessionDown(currentRoot, id, { crashed: m.type === 'wraith:worker_crashed' });
+  }
+  if (m.type === 'wraith:spawn_session' && m.sessionId) {
+    if (children.has(m.sessionId)) {
+      say(yellow(`session ${m.sessionId} is already running`));
+    } else {
+      say(green(`dynamic spawn request received for session ${m.sessionId}${m.number ? ' (+' + m.number + ')' : ''}`));
+      spawnSession(currentRoot, m.sessionId, m.number || null, { fresh: true });
+    }
+  }
+  if (m.type === 'wraith:restart_all') {
+    say(cyan(`multi-session update requested by ${id || podId} — restarting all other sessions`));
+    for (const [otherId] of children.entries()) {
+      if (otherId !== id) { restartingSessions.add(otherId); sendToSession(otherId, { type: 'wraith:shutdown' }); }
+    }
+  }
+  if (m.type === 'wraith:delete_session' && m.sessionId) {
+    say(yellow(`delete session request received for ${m.sessionId}`));
+    deleteSession(currentRoot, String(m.sessionId));
   }
 }
 
 // Start several sessions one after another (a simultaneous boot spikes CPU/RAM and the WA servers).
+// Sessions land in pods of WRAITH_SESSIONS_PER_POD, filling each pod's initial
+// batch before moving to the next, so a fresh box doesn't spin up one pod per
+// session at startup.
 function spawnAll(root, ids) {
-  ids.forEach((id, i) => {
-    const go = () => { if (!shuttingDown) spawnSession(root, id, null, { totalSessions: ids.length }); };
+  currentRoot = root;
+  // Bulk/startup path: chunk directly into fresh pods of WRAITH_SESSIONS_PER_POD
+  // rather than going through findOrCreatePod() per id — that check looks at
+  // each pod's LIVE sessionIds, which only fills in once registerSessionRec()
+  // actually runs (staggered, below), so a tight synchronous loop over it
+  // would see every pod as empty and pile everything into the first one.
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += PODS_SESSIONS_PER_POD) chunks.push(ids.slice(i, i + PODS_SESSIONS_PER_POD));
+  chunks.forEach((chunk, i) => {
+    const go = () => {
+      if (shuttingDown) return;
+      const podId = createPod(root);
+      assignBatchToPod(root, podId, chunk);
+    };
     if (i === 0 || STAGGER_MS <= 0) go(); else setTimeout(go, i * STAGGER_MS);
   });
 }
 
-// .delsession: unlink the device, stop the process, WAIT for it to exit, then delete the folder.
+function registerSessionRec(podId, id, number) {
+  let resolveLinked, resolveExit;
+  const linkedPromise = new Promise(r => (resolveLinked = r));
+  const exitPromise = new Promise(r => (resolveExit = r));
+  const rec = { podId, number, restarts: 0, resetTimer: null, resolveLinked, resolveExit, deleting: false };
+  children.set(id, rec);
+  pods.get(podId)?.sessionIds.add(id);
+  clearTimeout(rec.resetTimer);
+  rec.resetTimer = setTimeout(() => { rec.restarts = 0; }, 20_000);
+  return { linkedPromise, exitPromise };
+}
+
+// Hands a freshly-created pod its initial batch of sessions, one
+// wraith:spawn_worker at a time (staggered — see WORKER_STAGGER_MS).
+const WORKER_STAGGER_MS = Number(process.env.WRAITH_WORKER_STAGGER_MS ?? 600);
+function assignBatchToPod(root, podId, ids) {
+  const shared = sharedDirOf(root);
+  if (!pods.has(podId)) return;
+  ids.forEach((id, i) => {
+    const go = () => {
+      if (shuttingDown || !pods.has(podId)) return;
+      const dir = makeInstance(root, id);
+      registerSessionRec(podId, id, null);
+      sendToPod(podId, {
+        type: 'wraith:spawn_worker',
+        sessionId: id,
+        number: null,
+        dataDir: dir,
+        sharedDir: shared,
+        totalSessions: totalLiveSessions(),
+      });
+    };
+    if (i === 0 || WORKER_STAGGER_MS <= 0) go(); else setTimeout(go, i * WORKER_STAGGER_MS);
+  });
+  setTimeout(broadcastCount, Math.max(800, ids.length * WORKER_STAGGER_MS + 800));
+}
+
+// .delsession: unlink the device, stop the worker, WAIT for it to exit, then delete the folder.
 // (Old flow deleted the folder while the process was still alive; its clean exit then looked like a
 //  "restart for update" and the launcher respawned it, re-creating the deleted instance.)
 function deleteSession(root, id) {
@@ -379,14 +610,26 @@ function deleteSession(root, id) {
   if (!rec) { wipe(); return; }
   rec.deleting = true;
   broadcastCount();
-  const killer = setTimeout(() => { try { rec.proc.kill('SIGKILL'); } catch {} }, 9000);
+  let check = null;
+  const killer = setTimeout(() => {
+    // Didn't exit cleanly in time — hard-kill just this session's worker
+    // (not the whole pod, which may be hosting other live sessions).
+    if (check) clearInterval(check);
+    sendToPod(rec.podId, { type: 'wraith:kill_session', sessionId: id });
+    onSessionDown(root, id, { crashed: false });
+    wipe();
+  }, 9000);
   killer.unref?.();
-  rec.proc.once('exit', () => { clearTimeout(killer); setTimeout(wipe, 300); });
-  try { rec.proc.send({ type: 'wraith:logout_and_exit' }); }
-  catch { try { rec.proc.kill('SIGTERM'); } catch {} }
+  const sent = sendToSession(id, { type: 'wraith:logout_and_exit' });
+  if (!sent) { clearTimeout(killer); onSessionDown(root, id, { crashed: false }); wipe(); return; }
+  // onSessionDown (triggered by the relayed wraith:session_exited) clears children/pods;
+  // we just need to notice it happened so we can wipe the folder promptly instead of
+  // waiting out the whole killer timeout.
+  check = setInterval(() => {
+    if (!children.has(id)) { clearInterval(check); clearTimeout(killer); setTimeout(wipe, 300); }
+  }, 250);
+  check.unref?.();
 }
-let shuttingDown = false;
-let rl = null;
 
 const ask = q => new Promise(res => rl.question(q, a => res(a.trim())));
 
@@ -462,197 +705,36 @@ async function promptNumber(label = 'number') {
   });
 }
 
+// Add (or re-add, on restart) ONE session, picking/creating a pod with room for it.
 function spawnSession(root, id, number, opts = {}) {
+  currentRoot = root;
   const refuse = why => {
     say(yellow(`not starting session "${id}": ${why}`));
-    return { proc: null, linkedPromise: Promise.resolve(false), exitPromise: Promise.resolve({ code: 1 }) };
+    return { linkedPromise: Promise.resolve(false), exitPromise: Promise.resolve({ code: 1 }) };
   };
   if (!VALID_ID.test(String(id))) return refuse('invalid id');
   if (opts.fresh) removed.delete(id);
   else if (removed.has(id)) return refuse('it was deleted');
+
   const shared = sharedDirOf(root);
   const dir = makeInstance(root, id);
-  // RAM-budget aware: split the box's total RAM across every session that will run
-  // concurrently, instead of handing each one the full ceiling (which is wrong the
-  // moment a 2nd session starts). Override per-session with WRAITH_MAX_OLD_SPACE_SIZE.
-  const totalSessions = Math.max(1, Number(opts.totalSessions) || 1);
-  const ramBudgetMB = Number(process.env.WRAITH_RAM_BUDGET_MB || detectRamBudgetMB());
-  // node baseline + OS slack is paid by EVERY session process, not once —
-  // each spawned child is its own full node process (module code, libuv,
-  // Baileys/libsignal state, pino, etc. all live outside the V8 heap this
-  // flag caps). Subtracting it only once badly over-budgeted the heap on
-  // every session as soon as more than 2-3 were running, so the real,
-  // combined RSS of all children blew past the box's actual RAM long before
-  // any single session hit its own --max-old-space-size ceiling.
-  const baseOverheadMB = Number(process.env.WRAITH_SESSION_OVERHEAD_MB || 30); // per-process baseline RSS outside the V8 heap
-  const autoPerSession = Math.floor((ramBudgetMB - baseOverheadMB * totalSessions) / totalSessions);
-  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || String(Math.max(24, Math.min(256, autoPerSession)));
-  const semiSpace = process.env.WRAITH_V8_SEMI_SPACE_SIZE || (ramBudgetMB <= 256 ? '8' : '16');
-  const args = [
-    `--max-old-space-size=${maxOldSpace}`,
-    `--max-semi-space-size=${semiSpace}`,
-    '--expose-gc',
-  ];
-  if (process.env.WRAITH_V8_POOL_SIZE) {
-    args.push(`--v8-pool-size=${process.env.WRAITH_V8_POOL_SIZE}`);
-  }
-  args.push(path.join(root, 'start.js'), '--session', id);
-  if (number) args.push('--number', number);
+  const podId = findOrCreatePod(root);
+  const { linkedPromise, exitPromise } = registerSessionRec(podId, id, number);
+  const rec = children.get(id);
+  if (opts.restarts) rec.restarts = opts.restarts;
 
-  const env = {
-    ...process.env,
-    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '2',
-    WRAITH_REPO_ROOT: root,
-    WRAITH_SESSION_ID: id,
-    WRAITH_DATA_DIR: dir,
-    WRAITH_SHARED_DIR: shared,
-    WRAITH_ACTIVE_SESSIONS: String(totalSessions),
-    // one V8 compile cache for every session → faster boot, less CPU
-    NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE || path.join(shared, '.compile-cache'),
-  };
-
-  say(cyan(`starting session ${id}${number ? ' · +' + number : ''}`));
-  const proc = spawn('node', args, {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    env,
-  });
-
-  let muted = false;
-  const backlog = [];
-  const route = (stream, dest) => {
-    stream.on('data', chunk => {
-      if (muted) backlog.push([dest, chunk]);
-      else dest.write(chunk);
-    });
-  };
-  route(proc.stdout, process.stdout);
-  route(proc.stderr, process.stderr);
-
-  let resolveLinked, resolveExit;
-  const linkedPromise = new Promise(r => (resolveLinked = r));
-  const exitPromise = new Promise(r => (resolveExit = r));
-
-  const rec = {
+  say(cyan(`starting session ${id}${number ? ' · +' + number : ''} on ${podId}`));
+  sendToPod(podId, {
+    type: 'wraith:spawn_worker',
+    sessionId: id,
     number,
-    proc,
-    restarts: 0,
-    resetTimer: null,
-    resolveLinked,
-    resolveExit,
-    mute: () => {
-      muted = true;
-    },
-    unmute: () => {
-      muted = false;
-      for (const [dest, chunk] of backlog) dest.write(chunk);
-      backlog.length = 0;
-    },
-  };
-  children.set(id, rec);
-
-  proc.on('message', m => {
-    if (m?.type === 'wraith:linked') {
-      try {
-        resolveLinked(true);
-      } catch {}
-    }
-    if (m?.type === 'wraith:spawn_session' && m.sessionId) {
-      if (children.has(m.sessionId)) {
-        say(yellow(`session ${m.sessionId} is already running`));
-      } else {
-        say(
-          green(
-            `dynamic spawn request received for session ${m.sessionId}${
-              m.number ? ' (+' + m.number + ')' : ''
-            }`
-          )
-        );
-        spawnSession(root, m.sessionId, m.number || null, { totalSessions: children.size + 1, fresh: true });
-      }
-    }
-    if (m?.type === 'wraith:restart_all') {
-      say(
-        cyan(
-          `multi-session update requested by ${id} — restarting all other sessions`
-        )
-      );
-      for (const [otherId, otherRec] of children.entries()) {
-        if (otherId !== id) {
-          restartingSessions.add(otherId);
-          try {
-            otherRec.proc.kill('SIGTERM');
-          } catch {}
-        }
-      }
-    }
-    if (m?.type === 'wraith:delete_session' && m.sessionId) {
-      say(yellow(`delete session request received for ${m.sessionId}`));
-      deleteSession(root, String(m.sessionId));
-    }
+    dataDir: dir,
+    sharedDir: shared,
+    totalSessions: totalLiveSessions(),
   });
-
-  proc.on('error', err =>
-    console.error(clock(), red('spawn error:'), err.message)
-  );
-
-  proc.on('exit', (code, signal) => {
-    if (children.get(id) === rec) children.delete(id);
-    try {
-      resolveExit({ code, signal });
-    } catch {}
-    clearTimeout(rec.resetTimer);
-    broadcastCount();
-
-    if (shuttingDown) return;
-    if (rec.deleting || removed.has(id)) return; // deleted on purpose — never restart
-
-    if (restartingSessions.has(id)) {
-      restartingSessions.delete(id);
-      say(cyan(`restarting session ${id} for update…`));
-      setTimeout(() => {
-        if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec.number, { totalSessions: Math.max(1, children.size) });
-      }, 1000);
-      return;
-    }
-
-    if (signal === 'SIGINT' || signal === 'SIGTERM') return;
-
-    rec.restarts++;
-    if (rec.restarts > MAX_RESTARTS) {
-      say(red(`${id}: exceeded max restarts (${MAX_RESTARTS}) — giving up`));
-      return;
-    }
-
-    const wait = Math.min(1500 * Math.pow(2, rec.restarts - 1), 30_000);
-    const exitDetail =
-      code !== null
-        ? `code ${code}`
-        : signal
-        ? `signal ${signal}`
-        : 'code null';
-    const why =
-      code === 0
-        ? 'restarting for update/clean exit'
-        : `crashed (${exitDetail})`;
-    say(
-      yellow(
-        `${id}: ${why} · retry ${rec.restarts} in ${(wait / 1000).toFixed(1)}s`
-      )
-    );
-
-    setTimeout(() => {
-      if (!shuttingDown && !removed.has(id)) spawnSession(root, id, rec.number, { totalSessions: Math.max(1, children.size) });
-    }, wait);
-  });
-
-  clearTimeout(rec.resetTimer);
-  rec.resetTimer = setTimeout(() => {
-    rec.restarts = 0;
-  }, 20_000);
   setTimeout(broadcastCount, 800);
 
-  return { proc, linkedPromise, exitPromise };
+  return { linkedPromise, exitPromise };
 }
 
 async function waitForLink(spawnResult, id) {
@@ -674,13 +756,6 @@ async function waitForLink(spawnResult, id) {
       )
     ),
   ]);
-}
-
-function muteAll() {
-  for (const rec of children.values()) rec.mute?.();
-}
-function unmuteAll() {
-  for (const rec of children.values()) rec.unmute?.();
 }
 
 async function linkOne(root, label, presetNumber = null) {
@@ -755,13 +830,11 @@ async function wizard(root) {
 function quiet(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
-  say(grey(`${sig} received — shutting down all sessions`));
-  for (const { proc } of children.values()) {
-    try {
-      proc.kill('SIGTERM');
-    } catch {}
+  say(grey(`${sig} received — shutting down all pods`));
+  for (const { proc } of pods.values()) {
+    try { proc.kill('SIGTERM'); } catch {}
   }
-  setTimeout(() => process.exit(0), 800);
+  setTimeout(() => process.exit(0), 1200);
 }
 
 process.on('SIGINT', () => quiet('SIGINT'));

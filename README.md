@@ -87,13 +87,18 @@ Set `SESSION_ID` (and `SESSION_API`) as a panel variable, in `.env`, at the top 
 ## Resource tuning (built for small VPS boxes)
 
 ### Multi-session RAM budget
-`index.js` (the multi-session launcher) splits your total RAM budget across every session it spawns, instead of giving each one the full heap size:
+Sessions run as `worker_threads` grouped into **pods** (processes) rather than one OS process per session — by default every 4 sessions (`WRAITH_SESSIONS_PER_POD`) share one process's Node/V8 baseline memory instead of each paying for it separately. `index.js` (the multi-session launcher) auto-detects your box's real RAM (container/cgroup-aware) and splits it across every session, instead of giving each one the full heap size:
 
 ```bash
-# .env or environment
-WRAITH_RAM_BUDGET_MB=220     # total RAM the bot may use (default 256 box → leave ~36MB for the OS)
+# .env or environment — leave unset to auto-detect from the box/container
+WRAITH_RAM_BUDGET_MB=220          # total RAM the bot may use
+WRAITH_SESSIONS_PER_POD=4         # sessions sharing one pod process (1 = old one-process-per-session)
 ```
-One session gets ~180MB of heap; two sessions get ~90MB each; three get ~60MB each, automatically. Override a single session's heap with `WRAITH_MAX_OLD_SPACE_SIZE` if you need an exact number instead.
+Override a single session's heap with `WRAITH_MAX_OLD_SPACE_SIZE` if you need an exact number instead of the auto-split.
+
+**Trade-off:** a pod sharing N sessions means a hard crash of the pod process itself (rare — a native-addon fault, a stack overflow) takes all N sessions down together, restarting together; one session's own WhatsApp-level errors never affect its pod-mates. Set `WRAITH_SESSIONS_PER_POD=1` for the old full-isolation behavior if you'd rather trade the RAM savings for that.
+
+The `.cpulimit`/`.ramlimit` governor reads this *process's* own CPU/RAM usage, which in pod mode is shared by every session hosted in that pod — so it now acts pod-wide rather than precisely per-session. The hard per-session memory ceiling still comes from `WRAITH_RAM_BUDGET_MB` (enforced via each worker's own V8 heap limit), regardless.
 
 ### Live commands (owner only)
 | Command | Does |
