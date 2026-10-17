@@ -8,8 +8,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { containerMemory } from './lib/sysinfo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Real RAM ceiling for this box/container (cgroup-aware where possible, falls
+// back to os.totalmem()). Used to size the RAM budget automatically when
+// WRAITH_RAM_BUDGET_MB isn't set, so more sessions fit on a bigger box without
+// hand-tuning, and fewer get started than the box can actually hold.
+function detectRamBudgetMB() {
+  try {
+    const limitBytes = containerMemory().limit;
+    if (limitBytes > 0) {
+      // Leave ~20% (min 64MB, max 256MB) for the OS, the launcher process
+      // itself, and anything else sharing the box.
+      const slackMB = Math.min(256, Math.max(64, Math.round((limitBytes / (1024 * 1024)) * 0.2)));
+      return Math.max(128, Math.round(limitBytes / (1024 * 1024)) - slackMB);
+    }
+  } catch { /* fall through */ }
+  return 256; // previous hardcoded default, used only if detection fails entirely
+}
 
 // ─────────────────────────────────────────────
 // 1. INLINE .env LOADER  (NO dotenv dependency)
@@ -458,10 +476,17 @@ function spawnSession(root, id, number, opts = {}) {
   // concurrently, instead of handing each one the full ceiling (which is wrong the
   // moment a 2nd session starts). Override per-session with WRAITH_MAX_OLD_SPACE_SIZE.
   const totalSessions = Math.max(1, Number(opts.totalSessions) || 1);
-  const ramBudgetMB = Number(process.env.WRAITH_RAM_BUDGET_MB || 256);
-  const baseOverheadMB = 40; // node baseline + OS slack, per process
-  const autoPerSession = Math.floor((ramBudgetMB - baseOverheadMB) / totalSessions);
-  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || String(Math.max(48, Math.min(256, autoPerSession)));
+  const ramBudgetMB = Number(process.env.WRAITH_RAM_BUDGET_MB || detectRamBudgetMB());
+  // node baseline + OS slack is paid by EVERY session process, not once —
+  // each spawned child is its own full node process (module code, libuv,
+  // Baileys/libsignal state, pino, etc. all live outside the V8 heap this
+  // flag caps). Subtracting it only once badly over-budgeted the heap on
+  // every session as soon as more than 2-3 were running, so the real,
+  // combined RSS of all children blew past the box's actual RAM long before
+  // any single session hit its own --max-old-space-size ceiling.
+  const baseOverheadMB = Number(process.env.WRAITH_SESSION_OVERHEAD_MB || 30); // per-process baseline RSS outside the V8 heap
+  const autoPerSession = Math.floor((ramBudgetMB - baseOverheadMB * totalSessions) / totalSessions);
+  const maxOldSpace = process.env.WRAITH_MAX_OLD_SPACE_SIZE || String(Math.max(24, Math.min(256, autoPerSession)));
   const semiSpace = process.env.WRAITH_V8_SEMI_SPACE_SIZE || (ramBudgetMB <= 256 ? '8' : '16');
   const args = [
     `--max-old-space-size=${maxOldSpace}`,
