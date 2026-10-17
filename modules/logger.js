@@ -14,6 +14,32 @@ const FLUSH_MS = 2000;
 const buffers = new Map();
 let flushTimer = null;
 
+// ── Retention: delete old `messages_<session>_<date>.txt` files ──
+// There's one file per session per calendar day and nothing ever removed
+// them, so on a small disk (e.g. 1GB across 8-10 sessions) they'd slowly
+// accumulate forever. Default keeps 7 days; set WRAITH_LOG_RETENTION_DAYS=0
+// to disable pruning.
+const RETENTION_DAYS = Number(process.env.WRAITH_LOG_RETENTION_DAYS ?? 7);
+
+export function pruneOldLogs() {
+  if (!(RETENTION_DAYS > 0)) return;
+  try {
+    const dir = logsPath();
+    const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(dir)) {
+      if (!/^messages_.+_\d{4}-\d{2}-\d{2}\.txt$/.test(name)) continue;
+      const full = path.join(dir, name);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch { /* file may already be gone / being written */ }
+    }
+  } catch { /* logs dir unreadable — nothing to prune */ }
+}
+
+pruneOldLogs();
+const pruneTimer = setInterval(pruneOldLogs, 6 * 60 * 60 * 1000); // every 6h
+if (typeof pruneTimer.unref === 'function') pruneTimer.unref();
+
 const loggedMsgIds = new Set();
 function isDuplicateMsg(msgId) {
   if (!msgId) return false;

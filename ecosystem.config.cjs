@@ -26,8 +26,10 @@ module.exports = {
             env: {
                 NODE_ENV: 'production',
                 // Total RAM (MB) the bot may use across the orchestrator + all sessions.
-                // Lower this if your box has less than 256MB; raise it if you have more.
-                WRAITH_RAM_BUDGET_MB: process.env.WRAITH_RAM_BUDGET_MB || '220',
+                // Leave WRAITH_RAM_BUDGET_MB unset to auto-detect the box/container's
+                // real RAM (cgroup-aware) and use ~80% of it; only pass it through here
+                // if you've set it yourself to override that.
+                ...(process.env.WRAITH_RAM_BUDGET_MB ? { WRAITH_RAM_BUDGET_MB: process.env.WRAITH_RAM_BUDGET_MB } : {}),
             },
             kill_timeout: 5000,
             wait_ready: false,
