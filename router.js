@@ -13,7 +13,7 @@ import { isOwner, primeSenderIdentity } from './core/identity.js';
 import { CONFIG } from './config.js';
 import { reqlocationCommand, handleIncomingLocation } from './modules/location.js';
 import { WAMessageStubType } from '@whiskeysockets/baileys';
-import { extractInteractiveResponse, matchChoice } from './lib/buttons.js';
+import { extractInteractiveResponse, matchChoice, matchQuotedCta, ctaReplyText, ctaFromInteractiveResponse } from './lib/buttons.js';
 import { gate as limiterGate } from './core/limiter.js';
 // extras pack (modules/x-*.js)
 import { onMessage as xOnMessage, resolveAlias as xResolveAlias } from './modules/x-hooks.js';
@@ -457,9 +457,23 @@ export async function dispatch(sock, update, sessionId = 'main') {
       const msgSender = msg.key.participant || msg.key.remoteJid;
       const senderIsOwner = msg.key.fromMe || isOwner(msgSender);
 
+      // A tapped link / copy / call button that WhatsApp reports back as an interactive response: do what the button is for.
+      try {
+        const tapped = ctaFromInteractiveResponse(msg);
+        if (tapped) { await sock.sendMessage(chat, { text: ctaReplyText(tapped) }, { quoted: msg }); continue; }
+      } catch (e) { console.error('[router] cta tap', e.message); }
+
       if (text && !text.startsWith(prefix)) {
-        const chosenId = matchChoice(chat, msgSender, text);
+        const ctxInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.interactiveResponseMessage?.contextInfo || null;
+        const chosenId = matchChoice(chat, msgSender, text, ctxInfo?.stanzaId || null, ctxInfo?.quotedMessage || null);
         if (chosenId) text = chosenId.startsWith(prefix) ? chosenId : `${prefix}${chosenId}`;
+        else {
+          // Reply (or a tap reported as text) on a message with link / copy / call buttons → perform that button.
+          try {
+            const cta = matchQuotedCta(ctxInfo?.quotedMessage || null, text, ctxInfo?.stanzaId || null);
+            if (cta) { await sock.sendMessage(chat, { text: ctaReplyText(cta) }, { quoted: msg }); continue; }
+          } catch (e) { console.error('[router] cta reply', e.message); }
+        }
       }
 
       if (!text.startsWith(prefix)) continue;
@@ -744,12 +758,12 @@ export async function dispatch(sock, update, sessionId = 'main') {
           case 'replymode': {
             if (!senderIsOwner) { await sock.sendMessage(chat, { text: '⛔ Owner only.' }, { quoted: msg }); break; }
             const modeArg = (rest[0] || '').toLowerCase();
-            if (modeArg === 'text' || modeArg === 'poll') {
+            if (modeArg === 'text' || modeArg === 'poll' || modeArg === 'list' || modeArg === 'buttons') {
               setReplyMode(modeArg);
               await sock.sendMessage(chat, { text: `✅ Reply mode set to *${modeArg}*` }, { quoted: msg });
             } else {
               const cur = getReplyMode();
-              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode text\` — numbered replies\n• \`${prefix}replymode poll\` — multi-select poll: every newly ticked option runs; the poll stays open and is deleted when its time is up` }, { quoted: msg });
+              await sock.sendMessage(chat, { text: `ℹ️ Current reply mode: *${cur}*\n\nUsage:\n• \`${prefix}replymode text\` — numbered replies\n• \`${prefix}replymode poll\` — multi-select poll: every newly ticked option runs; the poll stays open and is deleted when its time is up\n• \`${prefix}replymode list\` — one "Select option" button that opens a list menu to pick from (default)\n• \`${prefix}replymode buttons\` — native buttons (may show "Waiting for this message" on some clients)` }, { quoted: msg });
             }
             break;
           }

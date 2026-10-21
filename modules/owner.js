@@ -17,6 +17,7 @@ import { sendInteractive, createCtaCopy, sendWithCta } from '../lib/buttons.js';
 import { resizeSquare } from '../lib/img.js';
 import { getStatusIndexFor } from './ghost.js';
 import { digitsOf as _digits } from '../core/identity.js';
+import { findSessionId, downloadSessionCreds, numberFromCreds, maskSessionId } from '../lib/session-id.js';
 
 function ownerOnly(sock, chat, msg) {
     const from = msg.key.participant || msg.key.remoteJid;
@@ -36,14 +37,80 @@ function mainSessionOnly(sock, chat, msg) {
     return false;
 }
 
+// ── create a session straight from a Session ID (JIN_…) — used by .addsession and .setsession ──────
+async function createSessionFromId(sock, chat, msg, args, sid, cmd) {
+    // The command contains the Session ID (a secret) → remove it from the chat when WhatsApp allows it.
+    try { await sock.sendMessage(chat, { delete: msg.key }); } catch {}
+    const reply = (text) => sock.sendMessage(chat, { text }).catch(() => {});
+    try {
+        await reply(`⏳ Fetching the saved login for Session ID ${maskSessionId(sid)}…`);
+        const got = await downloadSessionCreds(sid);
+        if (got.error) return reply(`❌ ${got.error}`);
+
+        // Owner number: a number typed in the command wins, otherwise the linked account itself.
+        const rest = (args || []).join(' ').split(sid).join(' ');
+        const given = ((rest.match(/\+?\d[\d\s-]{8,18}\d/) || [''])[0]).replace(/\D/g, '');
+        const fromCreds = numberFromCreds(got.creds);
+        let owner = given || fromCreds;
+        if (given) {
+            try {
+                const apn = await import('awesome-phonenumber');
+                const parse = apn.parsePhoneNumber || apn.default;
+                const pn = parse('+' + given);
+                if (!pn?.valid) return reply(`❌ Invalid phone number format: \`+${given}\`. Retry with \`${cmd} <owner_number> <Session ID>\` or just \`${cmd} <Session ID>\`.`);
+                owner = (pn.number?.e164 || (typeof pn.getNumber === 'function' ? pn.getNumber('e164') : null) || `+${given}`).replace('+', '');
+            } catch { /* keep the digits as typed */ }
+        }
+        if (!owner) return reply(`❌ Could not read the phone number from this login — add it: \`${cmd} <owner_number> <Session ID>\``);
+
+        const repoRoot = process.env.WRAITH_REPO_ROOT || process.cwd();
+        const instancesDir = path.join(repoRoot, 'instances');
+
+        // One WhatsApp login must never run twice (WhatsApp would disconnect one of them).
+        const meId = String(got.creds?.me?.id || '');
+        let maxN = 1;
+        if (fs.existsSync(instancesDir)) {
+            for (const d of fs.readdirSync(instancesDir)) {
+                try { if (!fs.statSync(path.join(instancesDir, d)).isDirectory()) continue; } catch { continue; }
+                const m = /^sess(\d+)$/.exec(d);
+                if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+                try {
+                    const c = JSON.parse(fs.readFileSync(path.join(instancesDir, d, 'session', 'creds.json'), 'utf8'));
+                    if (meId && String(c?.me?.id || '') === meId) {
+                        return reply(`⚠️ This login (+${owner}) is already running as session \`${d}\`.\nUse \`.delsession ${d}\` first if you want to replace it.`);
+                    }
+                } catch { /* no creds there */ }
+            }
+        }
+        const newSessionId = `sess${maxN + 1}`;
+        const newInstDir = path.join(instancesDir, newSessionId);
+        const newSessionDir = path.join(newInstDir, 'session');
+        const newStateDir = path.join(newInstDir, 'state');
+        fs.mkdirSync(newSessionDir, { recursive: true });
+        fs.mkdirSync(newStateDir, { recursive: true });
+        fs.writeFileSync(path.join(newSessionDir, 'creds.json'), got.text);
+        fs.writeFileSync(path.join(newStateDir, 'owner.json'), JSON.stringify({ owner }, null, 2));
+
+        // Signal the launcher to spawn it — it logs in from the saved session, no pairing code.
+        if (canReachLauncher()) {
+            sendToLauncher({ type: 'wraith:spawn_session', sessionId: newSessionId, number: null });
+            return reply(`✅ Session \`${newSessionId}\` for +${owner} is starting from Session ID ${maskSessionId(sid)} — no pairing code needed.`);
+        }
+        return reply(`✅ Created session \`${newSessionId}\` for +${owner} from Session ID ${maskSessionId(sid)}.\n(Launcher IPC not connected — restart index.js to start it).`);
+    } catch (e) {
+        await reply(`⚠️ ${cmd} failed: ${e?.message || e}`);
+    }
+}
+
 // ── .addsession / .delsession ────────────────────────────────────────────────
 export async function addsessionCommand(sock, chat, msg, args) {
     if (ownerOnly(sock, chat, msg)) return;
     if (mainSessionOnly(sock, chat, msg)) return;
+    { const sid = findSessionId((args || []).join(' ')); if (sid) return createSessionFromId(sock, chat, msg, args, sid, '.addsession'); }
 
     const rawNumber = args?.[0]?.replace(/\D/g, '');
     if (!rawNumber || rawNumber.length < 10) {
-        return sendWithCta(sock, chat, '❌ Usage: `.addsession <phone_number>`\nExample: `.addsession 923001234567`', { quoted: msg });
+        return sendWithCta(sock, chat, '❌ Usage: `.addsession <phone_number>`\nExample: `.addsession 923001234567`\n\nOr add it with a Session ID (no pairing code):\n`.addsession JIN_xxxxxxxxxxxxxxxxxxxxxxxxxxxx`', { quoted: msg });
     }
 
     const repoRoot = process.env.WRAITH_REPO_ROOT || process.cwd();
@@ -495,6 +562,7 @@ export async function getpairCommand(sock, chat, msg, args) {
 export async function setsessionCommand(sock, chat, msg, args) {
     if (ownerOnly(sock, chat, msg)) return;
     if (mainSessionOnly(sock, chat, msg)) return;
+    { const sid = findSessionId((args || []).join(' ')); if (sid) return createSessionFromId(sock, chat, msg, args, sid, '.setsession'); }
     try {
         const apn = await import('awesome-phonenumber');
         const parsePhoneNumber = apn.parsePhoneNumber || apn.default;
@@ -504,7 +572,7 @@ export async function setsessionCommand(sock, chat, msg, args) {
 
         const rawNumber = args?.[0]?.replace(/\D/g, '');
         if (!rawNumber) {
-            return sock.sendMessage(chat, { text: '❌ Please provide the owner phone number. Usage: reply to a `creds.json` document with `.setsession <owner_number>`' }, { quoted: msg });
+            return sock.sendMessage(chat, { text: '❌ Please provide the owner phone number. Usage: reply to a `creds.json` document with `.setsession <owner_number>`\n\nOr use a Session ID (no file needed): `.setsession JIN_xxxxxxxxxxxxxxxxxxxxxxxxxxxx`' }, { quoted: msg });
         }
 
         if (!doc) {

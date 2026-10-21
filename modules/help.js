@@ -3,8 +3,8 @@
 // Clean single-message plain text list menu with box layout
 // ─────────────────────────────────────────────
 import { isOwner } from '../core/identity.js';
-import { getPrefix } from '../core/settings.js';
-import { newsletterContext, sendWithCta } from '../lib/buttons.js';
+import { getPrefix, getReplyMode } from '../core/settings.js';
+import { newsletterContext, sendWithCta, sendInteractive, createSingleSelect, createCtaUrl } from '../lib/buttons.js';
 import { X_MENU } from './x-details.js';
 import { CONFIG } from '../config.js';
 import { businessStatusQuote } from '../lib/fakequote.js';
@@ -477,7 +477,7 @@ const REGISTRY = [
       c('.setabout <text>', true),
       c('.setstatus reply|text', true),
       c('.getstatus <number|jid>', true),
-      c('.replymode buttons|txt', true),
+      c('.replymode text|poll|list', true),
       c('.getpair <number>', true),
       c('.setsession <number>', true),
       c('.addsession <number>', true),
@@ -576,37 +576,52 @@ function clockParts() {
   };
 }
 
-// First part on the Platform line, every further part on its own line that also starts with the bar.
+// "Linux Debian GNU/Linux 12 (bookworm)" is far too long for one menu line → "Debian 12".
+function shortOs(os) {
+  const t = String(os || '').replace(/\(.*?\)/g, ' ').replace(/GNU\/Linux/i, ' ').replace(/^Linux\s+/i, '').replace(/\s+/g, ' ').trim();
+  return t.length > 24 ? t.slice(0, 24).trim() : t;
+}
+
 function platformLines() {
   const parts = platformParts();
-  const lines = [`│ ${toSmallCaps('Platform')}: ${parts[0] || 'unknown'}`];
-  for (const extra of parts.slice(1)) lines.push(`│ ${extra}`);
+  const lines = [`│ 🖥️ ${toSmallCaps('Platform')}: ${parts[0] || 'unknown'}`];
+  const os = shortOs(parts[1]);
+  if (os) lines.push(`│ 🐧 ${toSmallCaps('System')}: ${os}`);
   return lines;
 }
 
 function renderHeaderBox(prefix, isOwnerUser, senderJid = '') {
-  const ownerText = isOwnerUser ? toSmallCaps('COMMANDS ARE OWNER-ONLY') : toSmallCaps('COMMANDS ARE PUBLIC');
+  const ownerText = isOwnerUser ? `🔒 ${toSmallCaps('COMMANDS ARE OWNER-ONLY')}` : `🌐 ${toSmallCaps('COMMANDS ARE PUBLIC')}`;
   const guideCmd = applyPrefix('.ᴄᴏᴍᴍᴀɴᴅ ꜰᴏʀ ɢᴜɪᴅᴇ', prefix);
   const { time, day, date } = clockParts();
   const who = String(senderJid || '').split('@')[0].split(':')[0] || 'user';
+  const total = visibleRegistry(isOwnerUser).reduce((n, g) => n + g.commands.length, 0);
   return [
     '      【 🤖 𝐀𝐥-𝐉𝐢𝐧 🤖 】',
     '┌─────────────────┈⚝',
     `│ ${ownerText}`,
     `│ ℹ️ ${guideCmd}`,
     '│',
-    `│ ${toSmallCaps('Prefix')}: ${prefix}`,
-    `│ ${toSmallCaps('User')}: @${who}`,
-    `│ ${toSmallCaps('Time')}: ${time}`,
-    `│ ${toSmallCaps('Day')}: ${day}`,
-    `│ ${toSmallCaps('Date')}: ${date}`,
-    `│ ${toSmallCaps('Version')}: ${botVersion()}`,
-    `│ ${toSmallCaps('Commands')}: ${totalCommands()}`,
-    `│ ${toSmallCaps('Ram')}: ${ramSummary()}`,
-    `│ ${toSmallCaps('Uptime')}: ${uptimeText()}`,
+    `│ 🔰 ${toSmallCaps('Prefix')}: ${prefix}`,
+    `│ 👤 ${toSmallCaps('User')}: @${who}`,
+    `│ 🕒 ${toSmallCaps('Time')}: ${time}`,
+    `│ 📆 ${toSmallCaps('Day')}: ${day}`,
+    `│ 📅 ${toSmallCaps('Date')}: ${date}`,
+    `│ 🏷️ ${toSmallCaps('Version')}: ${botVersion()}`,
+    `│ 🧩 ${toSmallCaps('Commands')}: ${total}`,
+    `│ 💾 ${toSmallCaps('Ram')}: ${ramSummary()}`,
+    `│ ⏳ ${toSmallCaps('Uptime')}: ${uptimeText()}`,
     ...platformLines(),
     '└─────────────────┈⚝',
   ].join('\n');
+}
+
+// A command line must fit one line of the menu bubble, otherwise WhatsApp wraps it onto a second line.
+// Long usages are cut down to just the command name.
+const MAX_CMD_CHARS = 26;
+function shortCmd(cmd) {
+  const s = String(cmd || '').trim();
+  return s.length <= MAX_CMD_CHARS ? s : (s.split(/\s+/)[0] || s);
 }
 
 function renderCategoryBox(group, prefix, isOwnerUser) {
@@ -622,7 +637,7 @@ function renderCategoryBox(group, prefix, isOwnerUser) {
   ];
 
   for (const item of visible) {
-    lines.push(`│ ◈ ${applyPrefix(item.cmd, prefix)}`);
+    lines.push(`│ ◈ ${applyPrefix(shortCmd(item.cmd), prefix)}`);
   }
 
   lines.push('└─────────────────┈⚝');
@@ -656,6 +671,50 @@ function findGroup(name) {
   );
 }
 
+// ── List menu (reply mode "list", the default) ──────────────────────────────────────────────
+// ONE message: the header box + a button that opens a list of categories to pick from
+// ("All" shows the whole menu, the others show that category). A link button to the channel sits beside it.
+const titleCase = (s) => String(s || '').toLowerCase().replace(/(^|[\s(&/-])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+const cmdName = (cmd, prefix) => applyPrefix(String(cmd || '').trim().split(/\s+/)[0] || '', prefix).replace(prefix, '');
+
+function listRows(prefix, isOwnerUser) {
+  const groups = visibleRegistry(isOwnerUser);
+  const total = groups.reduce((n, g) => n + g.commands.length, 0);
+  const rows = [{ title: 'All', description: `${total} commands`, id: 'help all', highlight_label: 'SHOW ALL MENU' }];
+  for (const g of groups) {
+    const names = [...new Set(g.commands.map((x) => cmdName(x.cmd, prefix)).filter(Boolean))];
+    if (!names.length) continue;
+    let shown = [];
+    for (const n of names) {                                   // as many names as fit, then "…N+"
+      const next = [...shown, n];
+      const more = names.length - next.length;
+      if (`${next.join(', ')}${more > 0 ? `, ...${more}+` : ''}`.length > 72 || next.length > 5) break;
+      shown = next;
+    }
+    const more = names.length - shown.length;
+    rows.push({
+      title: titleCase(g.title).slice(0, 24),
+      description: `${shown.join(', ')}${more > 0 ? `, ...${more}+` : ''}`,
+      id: `help ${g.id}`,
+    });
+  }
+  return rows;
+}
+
+async function sendListMenu(sock, chat, msg, prefix, isOwnerUser, senderJid = '', mentions = []) {
+  const rows = listRows(prefix, isOwnerUser);
+  if (rows.length < 2) return null;
+  const quoted = businessStatusQuote();
+  const body = `${renderHeaderBox(prefix, isOwnerUser, senderJid)}\n\n👇 Tap *Select menu* and pick a category.`;
+  const buttons = [
+    createCtaUrl('📢 Channel', CHANNEL_LINK),
+    createSingleSelect('Select menu', [{ title: 'Menu', rows }]),
+  ];
+  let image;
+  try { if (imenuMode() !== 'off') image = await menuThumb(); } catch { /* no banner */ }
+  return sendInteractive(sock, chat, { body, footer: 'Al-Jin', buttons, mentions, ...(image ? { image } : {}) }, { quoted });
+}
+
 export async function helpCommand(sock, chat, msg, args) {
   try {
     const from = msg.key.participant || msg.key.remoteJid;
@@ -667,7 +726,14 @@ export async function helpCommand(sock, chat, msg, args) {
 
     const target = (args?.[0] || '').toLowerCase().trim();
 
-    if (!target) {
+    if (!target && getReplyMode() === 'list') {
+      try {
+        const sentList = await sendListMenu(sock, chat, msg, prefix, isOwnerUser, senderJid, mentions);
+        if (sentList) return sentList;
+      } catch (e) { try { console.error('[menu:list]', e?.message || e); } catch {} }
+    }
+
+    if (!target || target === 'all') {                 // ".help all" = the whole menu (what the "All" row of the list sends)
       const text = renderAllPlainText(prefix, isOwnerUser, senderJid);
       return await sendMenu(sock, chat, text, msg, mentions);
     }

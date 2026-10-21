@@ -91,12 +91,17 @@ export function setSetting(key, value) {
 }
 
 export function getReplyMode() {
-  // Two modes only: "text" (default, numbered replies) and "poll" (multi-select poll).
-  // An old saved "buttons" value is treated as "text".
+  // text     plain text, numbered replies
+  // poll     multi-select poll
+  // list     one "Select option" button that opens a list menu to pick from   (default)
+  // buttons  native-flow buttons (many non-business clients show "Waiting for this message")
   const m = load().replyMode || process.env.WRAITH_REPLY_MODE;
-  return m === 'poll' ? 'poll' : 'text';
+  if (m === 'text') return 'text';
+  if (m === 'poll') return 'poll';
+  if (m === 'buttons') return 'buttons';
+  return 'list';
 }
 
 export function setReplyMode(mode) {
-  put('replyMode', mode === 'poll' ? 'poll' : 'text');
+  put('replyMode', mode === 'poll' ? 'poll' : mode === 'buttons' ? 'buttons' : mode === 'list' ? 'list' : 'text');
 }

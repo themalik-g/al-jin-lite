@@ -11,31 +11,33 @@ const isUrl = (s) => /^https?:\/\//i.test(String(s || ''));
 const edit = async (sock, chat, st, text) => { try { await sock.sendMessage(chat, { text, ...(st?.key ? { edit: st.key } : {}) }); } catch {} };
 const react = async (sock, msg, emoji) => { try { await sock.sendMessage(msg.key.remoteJid, { react: { text: emoji, key: msg.key } }); } catch {} };
 
-async function resolve(query, st, sock, chat) {
+async function resolve(query, note) {
   if (isUrl(query)) {
     if (!isYoutubeUrl(query)) throw new Error('only YouTube links are supported here — use .dl for other sites');
     return { url: query, title: null };
   }
   const hit = (await ytSearch(query, 1))[0];
   if (!hit) throw new Error('nothing found for that search');
-  await edit(sock, chat, st, `🔎 *Found:* ${hit.title}\n⏬ Sending…`);
+  note(`🔎 *Found:* ${hit.title}\n⏬ Sending…`);   // not awaited — the download must not wait for it
   return { url: hit.url, title: hit.title };
 }
 
 async function run(sock, chat, msg, args, { type, label, usage }) {
   const query = (args || []).join(' ').trim();
   if (!query) return sock.sendMessage(chat, { text: usage }, { quoted: msg });
-  const st = await sock.sendMessage(chat, { text: `${label} *working…*` }, { quoted: msg });
+  // the "working…" message goes out while the search / download already runs
+  const stP = sock.sendMessage(chat, { text: `${label} *working…*` }, { quoted: msg }).catch(() => null);
+  const note = async (text) => edit(sock, chat, await stP, text);
   try {
-    const { url, title } = await resolve(query, st, sock, chat);
+    const { url, title } = await resolve(query, note);
     await esmYoutubeSend(sock, chat, msg, url, {
       type,
       caption: (i) => `${[`🎬 *${i.title || title || 'YouTube'}*`, i.author && `👤 ${i.author}`, i.duration && `⏱ ${i.duration}`].filter(Boolean).join('\n')}\n\n${BRAND}`,
     });
-    await edit(sock, chat, st, '✅ Done');
+    await note('✅ Done');
     await react(sock, msg, '☑');
   } catch (e) {
-    await edit(sock, chat, st, `❌ *Failed:* ${e.message}`);
+    await note(`❌ *Failed:* ${e.message}`);
     await react(sock, msg, '❌');
   }
 }

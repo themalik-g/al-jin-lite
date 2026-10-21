@@ -113,6 +113,8 @@ const Pairing_Number = ''; // ← put your number here, e.g. '923001234567'
 // ═══════════════════════════════════════════════
 const SESSION_ID = '';
 const SESSION_API = '';
+// Commands inside the bot (.setsession / .addsession / .kb with a Session ID) need the store address too.
+if (SESSION_API && !process.env.SESSION_API) process.env.SESSION_API = SESSION_API;
 
 const CLONE_TIMEOUT = 180_000;
 const INSTALL_TIMEOUT = 300_000;

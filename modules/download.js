@@ -15,7 +15,7 @@ const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_VIDEO = 60 * 1024 * 1024;
 const RESOLVE_TIMEOUT = 120_000;
 const ITEM_DL_TIMEOUT = 90_000;
-const ITEM_GAP_MS = 700;
+const ITEM_GAP_MS = 400;
 const BRAND = 'Provided by 𝐀𝐥-𝐉𝐢𝐧';
 const queue = new PQueue({ concurrency: 1 });
 
